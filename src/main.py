@@ -56,7 +56,11 @@ async def sse_endpoint(request: Request):
         # 1. Send the 'endpoint' event so Poke knows where to POST tool calls
         # We point it to the same host's /messages path
         # Use query parameter for session identification if needed by the protocol
+        # Force a absolute URL with https if we're behind a proxy
         endpoint_url = str(request.url_for("messages_endpoint"))
+        if os.getenv("RENDER") and endpoint_url.startswith("http://"):
+            endpoint_url = endpoint_url.replace("http://", "https://", 1)
+        
         yield f"event: endpoint\ndata: {endpoint_url}\n\n"
         
         # 2. Keep connection alive
@@ -72,7 +76,8 @@ async def sse_endpoint(request: Request):
         headers={
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
-            "X-Accel-Buffering": "no"
+            "X-Accel-Buffering": "no",
+            "Content-Type": "text/event-stream",
         }
     )
 
@@ -90,8 +95,25 @@ async def messages_endpoint(request: Request):
     params = payload.get("params", {})
     request_id = payload.get("id")
 
+    # Handle JSON-RPC initialization handshake
+    if method == "initialize":
+        return {
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "result": {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {
+                    "tools": {"listChanged": False}
+                },
+                "serverInfo": {
+                    "name": "Kronos-Future-Vision",
+                    "version": "1.0.0"
+                }
+            }
+        }
+
     # Basic MCP 'list_tools' support
-    if method == "list_tools":
+    if method == "tools/list":
         return {
             "jsonrpc": "2.0",
             "id": request_id,
@@ -113,30 +135,33 @@ async def messages_endpoint(request: Request):
         }
 
     # Handle 'call_tool' for 'analyze'
-    if method == "call_tool" and params.get("name") == "analyze":
+    if method == "tools/call" or (method == "call_tool" and params.get("name") == "analyze"):
+        tool_name = params.get("name") or params.get("tool")
         args = params.get("arguments", {})
-        try:
-            # Run the potentially blocking analysis in a thread
-            report = await asyncio.to_thread(
-                engine.run_unified_analysis,
-                ticker=args.get("ticker"),
-                days_back=args.get("days_back", 300),
-                horizon=args.get("forecast_horizon", 30)
-            )
-            return {
-                "jsonrpc": "2.0",
-                "id": request_id,
-                "result": {
-                    "content": [{"type": "text", "text": json.dumps(report)}],
-                    "isError": False
+        
+        if tool_name == "analyze":
+            try:
+                # Run the potentially blocking analysis in a thread
+                report = await asyncio.to_thread(
+                    engine.run_unified_analysis,
+                    ticker=args.get("ticker"),
+                    days_back=args.get("days_back", 300),
+                    horizon=args.get("forecast_horizon", 30)
+                )
+                return {
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "result": {
+                        "content": [{"type": "text", "text": json.dumps(report)}],
+                        "isError": False
+                    }
                 }
-            }
-        except Exception as e:
-            return {
-                "jsonrpc": "2.0",
-                "id": request_id,
-                "error": {"code": -32000, "message": str(e)}
-            }
+            except Exception as e:
+                return {
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "error": {"code": -32000, "message": str(e)}
+                }
 
     return {"jsonrpc": "2.0", "id": request_id, "error": {"code": -32601, "message": "Method not found"}}
 
