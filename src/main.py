@@ -2,7 +2,7 @@ import os
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import Dict, Any, Optional
-from .engine import FutureVisionEngine
+from src.engine import FutureVisionEngine
 
 app = FastAPI(title="Kronos Future-Vision MCP")
 engine = None
