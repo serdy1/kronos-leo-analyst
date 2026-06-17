@@ -3,11 +3,22 @@ import json
 import asyncio
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse, HTMLResponse
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Dict, Any, Optional
 from src.engine import FutureVisionEngine
 
 app = FastAPI(title="Kronos Future-Vision MCP")
+
+# Add CORS middleware to ensure Poke can communicate with the server
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 engine = None
 
 class AnalysisRequest(BaseModel):
@@ -43,6 +54,8 @@ async def sse_endpoint(request: Request):
     """
     async def event_generator():
         # 1. Send the 'endpoint' event so Poke knows where to POST tool calls
+        # We point it to the same host's /messages path
+        # Use query parameter for session identification if needed by the protocol
         endpoint_url = str(request.url_for("messages_endpoint"))
         yield f"event: endpoint\ndata: {endpoint_url}\n\n"
         
@@ -53,7 +66,15 @@ async def sse_endpoint(request: Request):
             yield ": keep-alive\n\n"
             await asyncio.sleep(15)
 
-    return StreamingResponse(event_generator(), media_type="text/event-stream")
+    return StreamingResponse(
+        event_generator(), 
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
+    )
 
 @app.post("/messages")
 async def messages_endpoint(request: Request):
@@ -105,7 +126,10 @@ async def messages_endpoint(request: Request):
             return {
                 "jsonrpc": "2.0",
                 "id": request_id,
-                "result": {"content": [{"type": "text", "text": json.dumps(report)}]}
+                "result": {
+                    "content": [{"type": "text", "text": json.dumps(report)}],
+                    "isError": False
+                }
             }
         except Exception as e:
             return {
