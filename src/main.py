@@ -2,7 +2,7 @@ import os
 import json
 import asyncio
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, HTMLResponse
 from pydantic import BaseModel
 from typing import Dict, Any, Optional
 from src.engine import FutureVisionEngine
@@ -17,12 +17,21 @@ class AnalysisRequest(BaseModel):
 
 @app.on_event("startup")
 async def load_models():
+    """
+    Load the engine asynchronously to prevent blocking the event loop.
+    This ensures /health and /sse remain responsive during init.
+    """
     global engine
-    engine = FutureVisionEngine()
+    # Offload the blocking __init__ to a thread
+    engine = await asyncio.to_thread(FutureVisionEngine)
+
+@app.get("/")
+def root():
+    return HTMLResponse("<h1>Kronos Future-Vision MCP</h1><p>Status: <a href='/health'>Online</a></p><p>MCP SSE: /sse</p>")
 
 @app.get("/health")
 def health():
-    return {"status": "online", "model": "Kronos-Hybrid-v1"}
+    return {"status": "online", "model": "Kronos-Hybrid-v1", "engine_loaded": engine is not None}
 
 # --- MCP SSE IMPLEMENTATION ---
 
@@ -34,7 +43,6 @@ async def sse_endpoint(request: Request):
     """
     async def event_generator():
         # 1. Send the 'endpoint' event so Poke knows where to POST tool calls
-        # We point it to the same host's /messages path
         endpoint_url = str(request.url_for("messages_endpoint"))
         yield f"event: endpoint\ndata: {endpoint_url}\n\n"
         
@@ -53,6 +61,9 @@ async def messages_endpoint(request: Request):
     Standard MCP Tool Dispatcher.
     Poke POSTs JSON-RPC here; we route 'analyze' to the engine.
     """
+    if engine is None:
+        return {"jsonrpc": "2.0", "id": None, "error": {"code": -32000, "message": "Engine is still initializing"}}
+
     payload = await request.json()
     method = payload.get("method")
     params = payload.get("params", {})
@@ -84,7 +95,9 @@ async def messages_endpoint(request: Request):
     if method == "call_tool" and params.get("name") == "analyze":
         args = params.get("arguments", {})
         try:
-            report = engine.run_unified_analysis(
+            # Run the potentially blocking analysis in a thread
+            report = await asyncio.to_thread(
+                engine.run_unified_analysis,
                 ticker=args.get("ticker"),
                 days_back=args.get("days_back", 300),
                 horizon=args.get("forecast_horizon", 30)
@@ -108,7 +121,12 @@ async def messages_endpoint(request: Request):
 async def analyze(req: AnalysisRequest):
     if not engine:
         raise HTTPException(status_code=503, detail="Model engine initializing")
-    return engine.run_unified_analysis(ticker=req.ticker, days_back=req.days_back, horizon=req.forecast_horizon)
+    return await asyncio.to_thread(
+        engine.run_unified_analysis, 
+        ticker=req.ticker, 
+        days_back=req.days_back, 
+        horizon=req.forecast_horizon
+    )
 
 if __name__ == "__main__":
     import uvicorn
