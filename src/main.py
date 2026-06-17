@@ -52,15 +52,15 @@ async def sse_endpoint(request: Request):
     Standard MCP SSE Transport Endpoint.
     Poke expects this to stay open and provide the /messages endpoint URL.
     """
+    # Force flushing of the response immediately
     async def event_generator():
         # 1. Send the 'endpoint' event so Poke knows where to POST tool calls
-        # We point it to the same host's /messages path
-        # Use query parameter for session identification if needed by the protocol
         # Force a absolute URL with https if we're behind a proxy
         endpoint_url = str(request.url_for("messages_endpoint"))
         if os.getenv("RENDER") and endpoint_url.startswith("http://"):
             endpoint_url = endpoint_url.replace("http://", "https://", 1)
         
+        # Immediate yield of the endpoint
         yield f"event: endpoint\ndata: {endpoint_url}\n\n"
         
         # 2. Keep connection alive
@@ -77,7 +77,8 @@ async def sse_endpoint(request: Request):
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no",
-            "Content-Type": "text/event-stream",
+            "Content-Type": "text/event-stream; charset=utf-8",
+            "Transfer-Encoding": "chunked",
         }
     )
 
@@ -179,5 +180,6 @@ async def analyze(req: AnalysisRequest):
 
 if __name__ == "__main__":
     import uvicorn
+    # Render assigns a port via the PORT env var
     port = int(os.getenv("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port)
