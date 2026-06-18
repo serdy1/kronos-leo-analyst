@@ -103,8 +103,28 @@ async def messages_endpoint(request: Request):
     method = body.get("method", "")
     req_id = body.get("id")
 
+    # Notifications (no id) - silently accept
+    if req_id is None:
+        return JSONResponse(content={}, status_code=202)
+
     if method == "ping":
         return {"jsonrpc": "2.0", "id": req_id, "result": {}}
+
+    if method == "initialize":
+        return {
+            "jsonrpc": "2.0",
+            "id": req_id,
+            "result": {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {
+                    "tools": {},
+                },
+                "serverInfo": {
+                    "name": "Kronos LEO Analyst",
+                    "version": "2.0.0",
+                },
+            },
+        }
 
     if method == "tools/list":
         return {
