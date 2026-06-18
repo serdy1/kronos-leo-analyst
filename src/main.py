@@ -59,11 +59,13 @@ async def sse_endpoint(request: Request):
     messages_url = f"{scheme}://{request.url.netloc}/messages"
 
     async def event_generator():
-        # 1. Immediate heartbeat - wakes up Render/Cloudflare proxy buffer
-        yield ": connected\n\n"
+        # 1. Bypass proxy buffering with a 1KB padding preamble
+        # A 1024-byte padding of SSE comments ensures Render/Cloudflare flushes the stream immediately.
+        padding = ": " + ("p" * 1022) + "\n\n"
+        yield padding
 
-        # 2. Small delay to let proxy flush the first bytes
-        await asyncio.sleep(0.05)
+        # 2. Immediate connected signal
+        yield ": connected\n\n"
 
         # 3. Send the endpoint event (tells client where to POST requests)
         yield f"event: endpoint\ndata: {messages_url}\n\n"
