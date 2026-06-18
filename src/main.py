@@ -59,9 +59,9 @@ async def sse_endpoint(request: Request):
     messages_url = f"{scheme}://{request.url.netloc}/messages"
 
     async def event_generator():
-        # 1. Bypass proxy buffering with a 1KB padding preamble
-        # A 1024-byte padding of SSE comments ensures Render/Cloudflare flushes the stream immediately.
-        padding = ": " + ("p" * 1022) + "\n\n"
+        # 1. Bypass proxy buffering with a 2KB padding preamble
+        # A 2048-byte padding of SSE comments ensures proxies (Render/Cloudflare/etc) flush the stream immediately.
+        padding = ": " + ("p" * 2046) + "\n\n"
         yield padding
 
         # 2. Immediate connected signal
@@ -76,7 +76,7 @@ async def sse_endpoint(request: Request):
                 if await request.is_disconnected():
                     break
                 yield ": keep-alive\n\n"
-                await asyncio.sleep(15)
+                await asyncio.sleep(10)
             except asyncio.CancelledError:
                 break
 
