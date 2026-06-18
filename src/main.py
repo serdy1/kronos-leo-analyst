@@ -1,16 +1,31 @@
 import os
+import time
 import json
 import asyncio
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import StreamingResponse, HTMLResponse
+from fastapi.responses import StreamingResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import Dict, Any, Optional
-from src.engine import FutureVisionEngine
+from typing import Optional
 
-app = FastAPI(title="Kronos Future-Vision MCP")
+engine = None
+_start_time = time.time()
 
-# Add CORS middleware to ensure Poke can communicate with the server
+
+def get_engine():
+    global engine
+    if engine is None:
+        from .engine import KronosLeoEngine
+        engine = KronosLeoEngine()
+    return engine
+
+
+app = FastAPI(
+    title="Kronos LEO Analyst - Combo Skill",
+    description="Unified API combining Kronos Foundation Model forecasting with AI Hedge Fund multi-agent analysis",
+    version="2.0.0",
+)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -19,167 +34,268 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-engine = None
 
 class AnalysisRequest(BaseModel):
     ticker: str
-    days_back: int = 300
+    days_back: int = 365
     forecast_horizon: int = 30
 
-@app.on_event("startup")
-async def load_models():
-    """
-    Load the engine asynchronously to prevent blocking the event loop.
-    This ensures /health and /sse remain responsive during init.
-    """
-    global engine
-    # Offload the blocking __init__ to a thread
-    engine = await asyncio.to_thread(FutureVisionEngine)
 
-@app.get("/")
-def root():
-    return HTMLResponse("<h1>Kronos Future-Vision MCP</h1><p>Status: <a href='/health'>Online</a></p><p>MCP SSE: /sse</p>")
+class HedgeFundRequest(BaseModel):
+    tickers: list[str]
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    selected_analysts: Optional[list[str]] = None
 
-@app.get("/health")
-def health():
-    return {"status": "online", "model": "Kronos-Hybrid-v1", "engine_loaded": engine is not None}
 
-# --- MCP SSE IMPLEMENTATION ---
+# ============================================================
+# MCP (Model Context Protocol) SSE Transport
+# ============================================================
 
 @app.get("/sse")
 async def sse_endpoint(request: Request):
-    """
-    Standard MCP SSE Transport Endpoint.
-    Poke expects this to stay open and provide the /messages endpoint URL.
-    """
-    # Force flushing of the response immediately
+    """MCP SSE transport endpoint."""
+    scheme = "https" if (os.getenv("RENDER") or request.url.scheme == "https") else request.url.scheme
+    messages_url = f"{scheme}://{request.url.netloc}/messages"
+
     async def event_generator():
-        # 1. Send the 'endpoint' event so Poke knows where to POST tool calls
-        # Force a absolute URL with https if we're behind a proxy
-        endpoint_url = str(request.url_for("messages_endpoint"))
-        if os.getenv("RENDER") and endpoint_url.startswith("http://"):
-            endpoint_url = endpoint_url.replace("http://", "https://", 1)
-        
-        # Immediate yield of the endpoint
-        yield f"event: endpoint\ndata: {endpoint_url}\n\n"
-        
-        # 2. Keep connection alive
+        # 1. Immediate heartbeat - wakes up Render/Cloudflare proxy buffer
+        yield ": connected\n\n"
+
+        # 2. Small delay to let proxy flush the first bytes
+        await asyncio.sleep(0.05)
+
+        # 3. Send the endpoint event (tells client where to POST requests)
+        yield f"event: endpoint\ndata: {messages_url}\n\n"
+
+        # 4. Keep connection alive with periodic heartbeats
         while True:
-            if await request.is_disconnected():
+            try:
+                if await request.is_disconnected():
+                    break
+                yield ": keep-alive\n\n"
+                await asyncio.sleep(15)
+            except asyncio.CancelledError:
                 break
-            yield ": keep-alive\n\n"
-            await asyncio.sleep(15)
 
     return StreamingResponse(
-        event_generator(), 
+        event_generator(),
         media_type="text/event-stream",
         headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
             "X-Accel-Buffering": "no",
-            "Content-Type": "text/event-stream; charset=utf-8",
-            "Transfer-Encoding": "chunked",
-        }
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Connection": "keep-alive",
+            "Pragma": "no-cache",
+            "Expires": "0",
+            "X-Content-Type-Options": "nosniff",
+        },
     )
+
 
 @app.post("/messages")
 async def messages_endpoint(request: Request):
-    """
-    Standard MCP Tool Dispatcher.
-    Poke POSTs JSON-RPC here; we route 'analyze' to the engine.
-    """
-    if engine is None:
-        return {"jsonrpc": "2.0", "id": None, "error": {"code": -32000, "message": "Engine is still initializing"}}
+    """MCP messages endpoint - receives JSON-RPC requests from the client."""
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse(status_code=400, content={"error": "Invalid JSON"})
 
-    payload = await request.json()
-    method = payload.get("method")
-    params = payload.get("params", {})
-    request_id = payload.get("id")
+    method = body.get("method", "")
+    req_id = body.get("id")
 
-    # Handle JSON-RPC initialization handshake
-    if method == "initialize":
-        return {
-            "jsonrpc": "2.0",
-            "id": request_id,
-            "result": {
-                "protocolVersion": "2024-11-05",
-                "capabilities": {
-                    "tools": {"listChanged": False}
-                },
-                "serverInfo": {
-                    "name": "Kronos-Future-Vision",
-                    "version": "1.0.0"
-                }
-            }
-        }
+    if method == "ping":
+        return {"jsonrpc": "2.0", "id": req_id, "result": {}}
 
-    # Basic MCP 'list_tools' support
     if method == "tools/list":
         return {
             "jsonrpc": "2.0",
-            "id": request_id,
+            "id": req_id,
             "result": {
-                "tools": [{
-                    "name": "analyze",
-                    "description": "Analyze a stock using Kronos forecasting and Agentic synthesis.",
-                    "inputSchema": {
-                        "type": "object",
-                        "properties": {
-                            "ticker": {"type": "string"},
-                            "days_back": {"type": "integer"},
-                            "forecast_horizon": {"type": "integer"}
+                "tools": [
+                    {
+                        "name": "analyze",
+                        "description": "Full combo analysis (Kronos forecast + AI Hedge Fund agent signals) for a stock ticker",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "ticker": {"type": "string", "description": "Stock ticker symbol (e.g. NVDA, AAPL)"},
+                                "days_back": {"type": "integer", "description": "Historical data window in days", "default": 365},
+                                "forecast_horizon": {"type": "integer", "description": "Forecast horizon in days", "default": 30},
+                            },
+                            "required": ["ticker"],
                         },
-                        "required": ["ticker"]
-                    }
-                }]
-            }
+                    },
+                    {
+                        "name": "kronos_forecast",
+                        "description": "Run Kronos foundation model forecast only (no agent signals)",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "ticker": {"type": "string", "description": "Stock ticker symbol"},
+                                "days_back": {"type": "integer", "description": "Historical data window in days", "default": 365},
+                                "forecast_horizon": {"type": "integer", "description": "Forecast horizon in days", "default": 30},
+                            },
+                            "required": ["ticker"],
+                        },
+                    },
+                    {
+                        "name": "health",
+                        "description": "Check server health and model status",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {},
+                        },
+                    },
+                ],
+            },
         }
 
-    # Handle 'call_tool' for 'analyze'
-    if method == "tools/call" or (method == "call_tool" and params.get("name") == "analyze"):
-        tool_name = params.get("name") or params.get("tool")
-        args = params.get("arguments", {})
-        
-        if tool_name == "analyze":
-            try:
-                # Run the potentially blocking analysis in a thread
-                report = await asyncio.to_thread(
-                    engine.run_unified_analysis,
-                    ticker=args.get("ticker"),
-                    days_back=args.get("days_back", 300),
-                    horizon=args.get("forecast_horizon", 30)
+    if method == "tools/call":
+        tool_name = body.get("params", {}).get("name", "")
+        arguments = body.get("params", {}).get("arguments", {})
+
+        eng = get_engine()
+        try:
+            if tool_name == "health":
+                result = {
+                    "status": "online",
+                    "version": "2.0.0",
+                    "kronos_loaded": eng.kronos_available,
+                }
+            elif tool_name == "analyze":
+                result = eng.run_unified_analysis(
+                    ticker=arguments.get("ticker", ""),
+                    days_back=arguments.get("days_back", 365),
+                    horizon=arguments.get("forecast_horizon", 30),
                 )
-                return {
-                    "jsonrpc": "2.0",
-                    "id": request_id,
-                    "result": {
-                        "content": [{"type": "text", "text": json.dumps(report)}],
-                        "isError": False
-                    }
-                }
-            except Exception as e:
-                return {
-                    "jsonrpc": "2.0",
-                    "id": request_id,
-                    "error": {"code": -32000, "message": str(e)}
-                }
+            elif tool_name == "kronos_forecast":
+                df = eng._fetch_data(arguments.get("ticker", ""), arguments.get("days_back", 365))
+                if df is None:
+                    result = {"error": "No data found"}
+                else:
+                    forecast = eng._kronos_forecast(df, arguments.get("forecast_horizon", 30))
+                    if forecast is None:
+                        forecast = eng._simulate_forecast(df, arguments.get("forecast_horizon", 30))
+                    result = {"forecast": forecast.to_dict()}
+            else:
+                return JSONResponse(
+                    status_code=400,
+                    content={"jsonrpc": "2.0", "id": req_id, "error": {"code": -32601, "message": f"Unknown tool: {tool_name}"}},
+                )
 
-    return {"jsonrpc": "2.0", "id": request_id, "error": {"code": -32601, "message": "Method not found"}}
+            return {"jsonrpc": "2.0", "id": req_id, "result": result}
 
-# Original REST endpoint preserved for manual testing
+        except Exception as e:
+            return {"jsonrpc": "2.0", "id": req_id, "error": {"code": -32603, "message": str(e)}}
+
+    return JSONResponse(
+        status_code=400,
+        content={"jsonrpc": "2.0", "id": req_id, "error": {"code": -32601, "message": f"Unknown method: {method}"}},
+    )
+
+
+# ============================================================
+# REST Endpoints (backwards compatible)
+# ============================================================
+
+@app.get("/health")
+def health():
+    eng = get_engine()
+    return {
+        "status": "online",
+        "version": "2.0.0",
+        "uptime_seconds": int(time.time() - _start_time),
+        "kronos_loaded": eng.kronos_available if eng else False,
+        "engine_ready": eng is not None,
+    }
+
+
+@app.get("/ping")
+def ping():
+    return {"ok": True, "uptime": int(time.time() - _start_time)}
+
+
+@app.get("/agents")
+def list_agents():
+    try:
+        from src.hedge_fund.utils.analysts import get_agents_list
+        return {"agents": get_agents_list()}
+    except Exception as e:
+        return {"agents": [], "error": str(e)}
+
+
+@app.get("/models")
+def list_models():
+    try:
+        from src.hedge_fund.llm.models import get_models_list
+        return {"models": get_models_list()}
+    except Exception as e:
+        return {"models": [], "error": str(e)}
+
+
 @app.post("/analyze")
 async def analyze(req: AnalysisRequest):
-    if not engine:
-        raise HTTPException(status_code=503, detail="Model engine initializing")
-    return await asyncio.to_thread(
-        engine.run_unified_analysis, 
-        ticker=req.ticker, 
-        days_back=req.days_back, 
-        horizon=req.forecast_horizon
-    )
+    eng = get_engine()
+    try:
+        report = eng.run_unified_analysis(
+            ticker=req.ticker,
+            days_back=req.days_back,
+            horizon=req.forecast_horizon,
+        )
+        if "error" in report:
+            raise HTTPException(status_code=400, detail=report["error"])
+        return report
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/hedge-fund")
+async def hedge_fund(req: HedgeFundRequest):
+    eng = get_engine()
+    try:
+        from datetime import datetime
+        now = datetime.now()
+        start = req.start_date or now.strftime("%Y-%m-%d")
+        end = req.end_date or now.strftime("%Y-%m-%d")
+
+        result = eng.run_hedge_fund(
+            tickers=req.tickers,
+            start_date=start,
+            end_date=end,
+            selected_analysts=req.selected_analysts,
+        )
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/kronos-forecast")
+async def kronos_forecast(req: AnalysisRequest):
+    eng = get_engine()
+    try:
+        df = eng._fetch_data(req.ticker, req.days_back)
+        if df is None:
+            raise HTTPException(status_code=400, detail=f"No data for {req.ticker}")
+
+        forecast = eng._kronos_forecast(df, req.forecast_horizon)
+        if forecast is None:
+            forecast = eng._simulate_forecast(df, req.forecast_horizon)
+
+        return {
+            "ticker": req.ticker,
+            "model_loaded": eng.kronos_available,
+            "historical_prices": df["close"].tail(10).to_dict(),
+            "forecast": forecast.to_dict(),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 if __name__ == "__main__":
     import uvicorn
-    # Render assigns a port via the PORT env var
     port = int(os.getenv("PORT", 8000))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    uvicorn.run("src.main:app", host="0.0.0.0", port=port)
