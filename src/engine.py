@@ -3,37 +3,54 @@ import torch
 import yfinance as yf
 import numpy as np
 
-class FutureVisionEngine:
+class KronosLeoEngine:
     def __init__(self):
         print("[INIT] Loading Kronos-Enhanced Future-Vision Engine...")
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.kronos_available = False # Mocked as false or true based on weights
         # In a real environment, you would load the foundation weights here
         # self.model = Kronos.from_pretrained(...)
         
-    def run_unified_analysis(self, ticker: str, days_back: int, horizon: int):
-        # 1. Fetch Historical Data
+    def _fetch_data(self, ticker: str, days_back: int):
         print(f"[DATA] Fetching {days_back} days of history for {ticker}...")
         df = yf.download(ticker, period=f"{days_back}d", interval="1d")
-        if df.empty: 
+        return df
+
+    def _kronos_forecast(self, df: pd.DataFrame, horizon: int):
+        # In production, replace with real predictor
+        return None
+
+    def _simulate_forecast(self, df: pd.DataFrame, horizon: int):
+        last_price = float(df['Close'].iloc[-1])
+        recent_returns = df['Close'].pct_change().dropna()
+        avg_volatility = recent_returns.std()
+        projected_growth = np.random.normal(0.05, 0.1)
+        forecast_price = last_price * (1 + projected_growth)
+        
+        forecast_dates = pd.date_range(start=df.index[-1] + pd.Timedelta(days=1), periods=horizon, freq='D')
+        prices = np.linspace(last_price, forecast_price, horizon)
+        return pd.Series(prices, index=forecast_dates)
+
+    def run_unified_analysis(self, ticker: str, days_back: int, horizon: int):
+        # 1. Fetch Historical Data
+        df = self._fetch_data(ticker, days_back)
+        if df is None or df.empty: 
             return {"error": f"No data found for ticker {ticker}"}
 
         # 2. Extract Technical Context
         last_price = float(df['Close'].iloc[-1])
         
         # 3. Simulate Kronos Foundation Model Forecast
-        # The Kronos model predicts K-line sequences (OHLCV)
-        # Here we simulate the trajectory based on the trend found in the context window
         recent_returns = df['Close'].pct_change().dropna()
-        avg_volatility = recent_returns.std()
+        if len(recent_returns) > 0:
+            avg_volatility = float(recent_returns.std())
+        else:
+            avg_volatility = 0.02
         
-        # We simulate a "Future-Vision" signal
-        # Mocking a forecast result (In production, replace with predictor.predict())
-        projected_growth = np.random.normal(0.05, 0.1) # Simulate a growth-biased forecast
+        projected_growth = float(np.random.normal(0.05, 0.1)) # Simulate a growth-biased forecast
         forecast_price = last_price * (1 + projected_growth)
         
         # 4. Agentic Decision Weighting (AI-Hedge-Fund Style)
-        # Each agent votes based on history + Kronos forecast
-        
         signals = {}
         
         # Buffett Agent: Cautious of high-volatility, likes stability

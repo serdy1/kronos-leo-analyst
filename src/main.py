@@ -165,36 +165,48 @@ async def messages_endpoint(request: Request):
         tool_name = body.get("params", {}).get("name", "")
         arguments = body.get("params", {}).get("arguments", {})
 
-        eng = get_engine()
+        # Run get_engine inside a thread to avoid blocking the event loop during heavy imports
+        eng = await asyncio.to_thread(get_engine)
         try:
             if tool_name == "health":
-                result = {
+                raw_result = {
                     "status": "online",
                     "version": "2.0.0",
                     "kronos_loaded": eng.kronos_available,
                 }
             elif tool_name == "analyze":
-                result = eng.run_unified_analysis(
+                raw_result = await asyncio.to_thread(
+                    eng.run_unified_analysis,
                     ticker=arguments.get("ticker", ""),
                     days_back=arguments.get("days_back", 365),
                     horizon=arguments.get("forecast_horizon", 30),
                 )
             elif tool_name == "kronos_forecast":
-                df = eng._fetch_data(arguments.get("ticker", ""), arguments.get("days_back", 365))
+                df = await asyncio.to_thread(eng._fetch_data, arguments.get("ticker", ""), arguments.get("days_back", 365))
                 if df is None:
-                    result = {"error": "No data found"}
+                    raw_result = {"error": "No data found"}
                 else:
-                    forecast = eng._kronos_forecast(df, arguments.get("forecast_horizon", 30))
+                    forecast = await asyncio.to_thread(eng._kronos_forecast, df, arguments.get("forecast_horizon", 30))
                     if forecast is None:
-                        forecast = eng._simulate_forecast(df, arguments.get("forecast_horizon", 30))
-                    result = {"forecast": forecast.to_dict()}
+                        forecast = await asyncio.to_thread(eng._simulate_forecast, df, arguments.get("forecast_horizon", 30))
+                    raw_result = {"forecast": forecast.to_dict()}
             else:
                 return JSONResponse(
                     status_code=400,
                     content={"jsonrpc": "2.0", "id": req_id, "error": {"code": -32601, "message": f"Unknown tool: {tool_name}"}},
                 )
 
-            return {"jsonrpc": "2.0", "id": req_id, "result": result}
+            # Properly format the response as a valid MCP Content array containing a text block
+            mcp_result = {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": json.dumps(raw_result, indent=2)
+                    }
+                ]
+            }
+
+            return {"jsonrpc": "2.0", "id": req_id, "result": mcp_result}
 
         except Exception as e:
             return {"jsonrpc": "2.0", "id": req_id, "error": {"code": -32603, "message": str(e)}}
