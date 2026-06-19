@@ -19,12 +19,15 @@ def get_engine():
         engine = LightweightHedgeFundEngine()
     return engine
 
+# Version 2.1.1: Optimized for SSE stability on Render
 app = FastAPI(
     title="Kronos Analyst - Gemini v2",
     description="Lightweight Multi-Agent Hedge Fund Analysis (Gemini API, <50MB RAM)",
-    version="2.1.0",
+    version="2.1.1",
 )
 
+# Only keep essential CORS middleware. 
+# No GZip or other compression middleware is added to prevent SSE buffering.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -42,11 +45,15 @@ class AnalysisRequest(BaseModel):
 
 @app.get("/sse")
 async def sse_endpoint(request: Request):
-    """MCP SSE transport endpoint with 4KB force-flush for proxy stability."""
+    """
+    MCP SSE transport endpoint with aggressive proxy-bypassing.
+    Uses 4KB padding to force flushes through Render/Cloudflare.
+    """
     scheme = "https" if (os.getenv("RENDER") or request.url.scheme == "https") else request.url.scheme
     messages_url = f"{scheme}://{request.url.netloc}/messages"
 
     async def event_generator():
+        # Immediate 4KB padding to break proxy buffering
         yield ": " + ("p" * 4000) + "\n\n"
         yield ": connected\n\n"
         yield f"event: endpoint\ndata: {messages_url}\n\n"
@@ -90,7 +97,7 @@ async def messages_endpoint(request: Request):
             "result": {
                 "protocolVersion": "2024-11-05",
                 "capabilities": {"tools": {}},
-                "serverInfo": {"name": "Kronos Analyst Gemini", "version": "2.1.0"},
+                "serverInfo": {"name": "Kronos Analyst Gemini", "version": "2.1.1"},
             },
         }
 
@@ -129,6 +136,7 @@ async def messages_endpoint(request: Request):
             raw_result = {
                 "status": "online",
                 "mode": "gemini-api-v1",
+                "version": "2.1.1",
                 "gemini_key_configured": os.getenv("GEMINI_API_KEY") is not None
             }
         elif tool_name == "analyze":
@@ -149,7 +157,7 @@ def health():
     return {
         "status": "online", 
         "mode": "gemini-api-v1", 
-        "version": "2.1.0",
+        "version": "2.1.1",
         "gemini_key_configured": os.getenv("GEMINI_API_KEY") is not None,
         "openai_key_configured": os.getenv("OPENAI_API_KEY") is not None,
         "uptime": int(time.time() - _start_time)

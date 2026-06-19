@@ -14,4 +14,5 @@ ENV PYTHONPATH=/app
 
 EXPOSE 8000
 
-CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000", "--loop", "uvloop", "--workers", "4", "--proxy-headers"]
+# Reduced to 1 worker to ensure SSE streams are not buffered or fragmented by worker management
+CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000", "--loop", "uvloop", "--workers", "1", "--proxy-headers"]
