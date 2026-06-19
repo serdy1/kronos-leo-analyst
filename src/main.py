@@ -84,12 +84,11 @@ async def sse_endpoint(request: Request):
         event_generator(),
         media_type="text/event-stream",
         headers={
+            "Content-Type": "text/event-stream",
+            "Cache-Control": "no-cache, no-transform",
             "X-Accel-Buffering": "no",
-            "Cache-Control": "no-cache, no-store, must-revalidate",
             "Connection": "keep-alive",
-            "Pragma": "no-cache",
-            "Expires": "0",
-            "X-Content-Type-Options": "nosniff",
+            "Transfer-Encoding": "chunked",
         },
     )
 
@@ -114,7 +113,7 @@ async def messages_endpoint(request: Request):
                 "capabilities": {
                     "tools": {"listChanged": True}
                 },
-                "serverInfo": {"name": "Kronos LEO Analyst", "version": "2.0.0"},
+                "serverInfo": {"name": "Kronos LEO Analyst", "version": "2.0.1"},
             },
         }
 
@@ -175,7 +174,7 @@ async def messages_endpoint(request: Request):
             if tool_name == "health":
                 raw_result = {
                     "status": "online",
-                    "version": "2.0.0",
+                    "version": "2.0.1",
                     "kronos_loaded": eng.kronos_available,
                 }
             elif tool_name == "analyze":
@@ -226,7 +225,7 @@ def health():
     eng = get_engine()
     return {
         "status": "online",
-        "version": "2.0.0",
+        "version": "2.0.1",
         "uptime_seconds": int(time.time() - _start_time),
         "kronos_loaded": eng.kronos_available if eng else False,
         "engine_ready": eng is not None,
