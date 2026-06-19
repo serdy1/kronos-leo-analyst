@@ -23,7 +23,7 @@ def get_engine():
 app = FastAPI(
     title="Kronos LEO Analyst - Combo Skill",
     description="Unified API combining Kronos Foundation Model forecasting with AI Hedge Fund multi-agent analysis",
-    version="2.0.0",
+    version="2.0.1",
 )
 
 app.add_middleware(
