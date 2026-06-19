@@ -1,7 +1,7 @@
-import os
 import time
 import json
 import asyncio
+import os
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -105,16 +105,18 @@ async def messages_endpoint(request: Request):
     method = body.get("method", "")
     req_id = body.get("id")
 
-	    if method == "initialize":
-	        return {
-	            "jsonrpc": "2.0",
-	            "id": req_id,
-	            "result": {
-	                "protocolVersion": "2024-11-05",
-	                "capabilities": {"tools": { "listChanged": true }},
-	                "serverInfo": {"name": "Kronos LEO Analyst", "version": "2.0.0"},
-	            },
-	        }
+    if method == "initialize":
+        return {
+            "jsonrpc": "2.0",
+            "id": req_id,
+            "result": {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {
+                    "tools": {"listChanged": True}
+                },
+                "serverInfo": {"name": "Kronos LEO Analyst", "version": "2.0.0"},
+            },
+        }
 
     if method == "ping":
         return {"jsonrpc": "2.0", "id": req_id, "result": {}}
@@ -197,7 +199,6 @@ async def messages_endpoint(request: Request):
                     status_code=400,
                     content={"jsonrpc": "2.0", "id": req_id, "error": {"code": -32601, "message": f"Unknown tool: {tool_name}"}},
                 )
-
             # Properly format the response as a valid MCP Content array containing a text block
             mcp_result = {
                 "content": [
@@ -207,12 +208,9 @@ async def messages_endpoint(request: Request):
                     }
                 ]
             }
-
             return {"jsonrpc": "2.0", "id": req_id, "result": mcp_result}
-
         except Exception as e:
             return {"jsonrpc": "2.0", "id": req_id, "error": {"code": -32603, "message": str(e)}}
-
     return JSONResponse(
         status_code=400,
         content={"jsonrpc": "2.0", "id": req_id, "error": {"code": -32601, "message": f"Unknown method: {method}"}},
@@ -284,7 +282,6 @@ async def hedge_fund(req: HedgeFundRequest):
         now = datetime.now()
         start = req.start_date or now.strftime("%Y-%m-%d")
         end = req.end_date or now.strftime("%Y-%m-%d")
-
         result = eng.run_hedge_fund(
             tickers=req.tickers,
             start_date=start,
@@ -303,11 +300,9 @@ async def kronos_forecast(req: AnalysisRequest):
         df = eng._fetch_data(req.ticker, req.days_back)
         if df is None:
             raise HTTPException(status_code=400, detail=f"No data for {req.ticker}")
-
         forecast = eng._kronos_forecast(df, req.forecast_horizon)
         if forecast is None:
             forecast = eng._simulate_forecast(df, req.forecast_horizon)
-
         return {
             "ticker": req.ticker,
             "model_loaded": eng.kronos_available,
