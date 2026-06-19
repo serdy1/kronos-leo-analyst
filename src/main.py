@@ -19,13 +19,12 @@ def get_engine():
         engine = LightweightHedgeFundEngine()
     return engine
 
-# Version 2.1.3: Total SSE Bypass for Render
-# Removed all padding to see if the "p" block is being flagged as junk by Render.
-# Added explicit charset and stricter SSE headers.
+# Version 2.1.4: Universal SSE Stability Fix
+# Aggressive headers to bypass Cloudflare/Render/Nginx buffering.
 app = FastAPI(
     title="Kronos Analyst - Gemini v2",
     description="Lightweight Multi-Agent Hedge Fund Analysis (Gemini API, <50MB RAM)",
-    version="2.1.3",
+    version="2.1.4",
 )
 
 app.add_middleware(
@@ -41,12 +40,17 @@ class AnalysisRequest(BaseModel):
 
 @app.get("/sse")
 async def sse_endpoint(request: Request):
+    """
+    MCP SSE transport endpoint.
+    Version 2.1.4: Added Cache-Control: no-cache, no-transform and charset.
+    Explicitly using chunked transfer encoding and identity encoding.
+    """
     scheme = "https" if (os.getenv("RENDER") or request.url.scheme == "https") else request.url.scheme
     messages_url = f"{scheme}://{request.url.netloc}/messages"
 
     async def event_generator():
-        # Version 2.1.3: Send only pure protocol events immediately.
-        # Minimal data might actually slip through Render's buffer if it's high-priority.
+        # Immediate 1KB padding + connection signal to force flush
+        yield ": " + (" " * 1024) + "\n\n"
         yield "data: connected\n\n"
         yield f"event: endpoint\ndata: {messages_url}\n\n"
         
@@ -54,8 +58,9 @@ async def sse_endpoint(request: Request):
             try:
                 if await request.is_disconnected():
                     break
+                # Keep-alive comment
                 yield ": keep-alive\n\n"
-                await asyncio.sleep(10)
+                await asyncio.sleep(15)
             except asyncio.CancelledError:
                 break
 
@@ -64,9 +69,10 @@ async def sse_endpoint(request: Request):
         media_type="text/event-stream",
         headers={
             "Content-Type": "text/event-stream; charset=utf-8",
-            "Cache-Control": "no-cache, no-transform, must-revalidate",
+            "Cache-Control": "no-cache, no-transform, must-revalidate, max-age=0",
             "X-Accel-Buffering": "no",
             "Connection": "keep-alive",
+            "Transfer-Encoding": "chunked",
             "Content-Encoding": "identity",
             "Pragma": "no-cache",
         },
@@ -89,7 +95,7 @@ async def messages_endpoint(request: Request):
             "result": {
                 "protocolVersion": "2024-11-05",
                 "capabilities": {"tools": {}},
-                "serverInfo": {"name": "Kronos Analyst Gemini", "version": "2.1.3"},
+                "serverInfo": {"name": "Kronos Analyst Gemini", "version": "2.1.4"},
             },
         }
 
@@ -128,7 +134,7 @@ async def messages_endpoint(request: Request):
             raw_result = {
                 "status": "online",
                 "mode": "gemini-api-v1",
-                "version": "2.1.3",
+                "version": "2.1.4",
                 "gemini_key_configured": os.getenv("GEMINI_API_KEY") is not None
             }
         elif tool_name == "analyze":
@@ -149,7 +155,7 @@ def health():
     return {
         "status": "online", 
         "mode": "gemini-api-v1", 
-        "version": "2.1.3",
+        "version": "2.1.4",
         "gemini_key_configured": os.getenv("GEMINI_API_KEY") is not None,
         "openai_key_configured": os.getenv("OPENAI_API_KEY") is not None,
         "uptime": int(time.time() - _start_time)
