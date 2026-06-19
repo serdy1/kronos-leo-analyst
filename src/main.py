@@ -20,9 +20,9 @@ def get_engine():
     return engine
 
 app = FastAPI(
-    title="Kronos Analyst - API-Hybrid v2",
-    description="Lightweight Multi-Agent Hedge Fund Analysis (API-driven, <50MB RAM)",
-    version="2.0.4",
+    title="Kronos Analyst - Gemini v2",
+    description="Lightweight Multi-Agent Hedge Fund Analysis (Gemini API, <50MB RAM)",
+    version="2.1.0",
 )
 
 app.add_middleware(
@@ -42,30 +42,21 @@ class AnalysisRequest(BaseModel):
 
 @app.get("/sse")
 async def sse_endpoint(request: Request):
-    """
-    MCP SSE transport endpoint with aggressive proxy-bypassing.
-    Version 2.0.4: Explicit immediate yield and increased preamble.
-    """
+    """MCP SSE transport endpoint with 4KB force-flush for proxy stability."""
     scheme = "https" if (os.getenv("RENDER") or request.url.scheme == "https") else request.url.scheme
     messages_url = f"{scheme}://{request.url.netloc}/messages"
 
     async def event_generator():
-        # 1. FORCE FLUSH: Send 4KB of whitespace/comments immediately.
         yield ": " + ("p" * 4000) + "\n\n"
-        
-        # 2. PROTOCOL SIGNAL: Immediate connection confirmation.
         yield ": connected\n\n"
-        
-        # 3. ENDPOINT EVENT: Tell the client where to POST.
         yield f"event: endpoint\ndata: {messages_url}\n\n"
         
-        # 4. HEARTBEAT LOOP
         while True:
             try:
                 if await request.is_disconnected():
                     break
                 yield ": keep-alive\n\n"
-                await asyncio.sleep(10)
+                await asyncio.sleep(15)
             except asyncio.CancelledError:
                 break
 
@@ -84,7 +75,6 @@ async def sse_endpoint(request: Request):
 
 @app.post("/messages")
 async def messages_endpoint(request: Request):
-    """MCP messages endpoint for JSON-RPC."""
     try:
         body = await request.json()
     except Exception:
@@ -100,7 +90,7 @@ async def messages_endpoint(request: Request):
             "result": {
                 "protocolVersion": "2024-11-05",
                 "capabilities": {"tools": {}},
-                "serverInfo": {"name": "Kronos Analyst v2", "version": "2.0.4"},
+                "serverInfo": {"name": "Kronos Analyst Gemini", "version": "2.1.0"},
             },
         }
 
@@ -112,18 +102,18 @@ async def messages_endpoint(request: Request):
                 "tools": [
                     {
                         "name": "analyze",
-                        "description": "Multi-agent hedge fund analysis for a ticker (Buffett, Lynch, Graham, etc.)",
+                        "description": "Multi-agent hedge fund analysis (Buffett, Burry, Graham, etc.) using Gemini Flash",
                         "inputSchema": {
                             "type": "object",
                             "properties": {
-                                "ticker": {"type": "string", "description": "Stock ticker symbol (e.g. NVDA)"},
+                                "ticker": {"type": "string", "description": "Stock ticker symbol (e.g. TSLA)"},
                             },
                             "required": ["ticker"],
                         },
                     },
                     {
                         "name": "health",
-                        "description": "Check server health",
+                        "description": "Check server health and Gemini configuration",
                         "inputSchema": {"type": "object", "properties": {}},
                     },
                 ],
@@ -136,7 +126,11 @@ async def messages_endpoint(request: Request):
         eng = get_engine()
 
         if tool_name == "health":
-            raw_result = {"status": "online", "mode": "api-driven-v2", "version": "2.0.4"}
+            raw_result = {
+                "status": "online",
+                "mode": "gemini-api-v1",
+                "gemini_key_configured": os.getenv("GEMINI_API_KEY") is not None
+            }
         elif tool_name == "analyze":
             raw_result = await eng.run_multi_agent_analysis(args.get("ticker", ""))
         else:
@@ -152,13 +146,12 @@ async def messages_endpoint(request: Request):
 
 @app.get("/health")
 def health():
-    # Check if API key is set (but don't expose it)
-    api_key_set = os.getenv("OPENAI_API_KEY") is not None
     return {
         "status": "online", 
-        "mode": "api-driven-v2", 
-        "version": "2.0.4",
-        "openai_key_configured": api_key_set,
+        "mode": "gemini-api-v1", 
+        "version": "2.1.0",
+        "gemini_key_configured": os.getenv("GEMINI_API_KEY") is not None,
+        "openai_key_configured": os.getenv("OPENAI_API_KEY") is not None,
         "uptime": int(time.time() - _start_time)
     }
 
