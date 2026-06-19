@@ -105,16 +105,16 @@ async def messages_endpoint(request: Request):
     method = body.get("method", "")
     req_id = body.get("id")
 
-    if method == "initialize":
-        return {
-            "jsonrpc": "2.0",
-            "id": req_id,
-            "result": {
-                "protocolVersion": "2024-11-05",
-                "capabilities": {"tools": {}},
-                "serverInfo": {"name": "Kronos LEO Analyst", "version": "2.0.0"},
-            },
-        }
+	    if method == "initialize":
+	        return {
+	            "jsonrpc": "2.0",
+	            "id": req_id,
+	            "result": {
+	                "protocolVersion": "2024-11-05",
+	                "capabilities": {"tools": { "listChanged": true }},
+	                "serverInfo": {"name": "Kronos LEO Analyst", "version": "2.0.0"},
+	            },
+	        }
 
     if method == "ping":
         return {"jsonrpc": "2.0", "id": req_id, "result": {}}
