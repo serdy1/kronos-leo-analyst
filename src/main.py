@@ -22,46 +22,43 @@ def get_engine():
     return engine
 
 # ---------------------------------------------------------------------------
-# Version 2.2.0: Hard SSE Compression Bypass
+# Version 2.2.1: Hard SSE Compression Bypass (ASGI Scope Fix)
 #
-# Problem: uvicorn[standard] ships with brotli + httptools which causes
-# automatic Brotli/GZip compression even when Content-Encoding: identity is
-# set in the response headers. Cloudflare and Render both buffer the
-# compressed stream instead of forwarding chunks immediately, causing
-# 20-second timeouts on SSE connections.
+# Problem: Version 2.2.0 used Starlette's Headers object to rebuild headers,
+# which triggered an "AssertionError: Cannot set both headers and scope."
+# Starlette is strict about not mixing high-level Headers objects with raw
+# ASGI scopes.
 #
 # Fix:
-#   1. A dedicated Starlette middleware strips Accept-Encoding from every
-#      request that targets /sse, so no compression layer ever activates.
-#   2. The SSE response explicitly sets all anti-buffering headers including
-#      X-Accel-Buffering: no (kills Nginx/Render proxy buffering),
-#      Cache-Control: no-cache, no-transform (kills Cloudflare transform),
-#      and Content-Encoding: identity (signals uncompressed raw stream).
+#   1. Directly manipulate the raw ASGI scope["headers"] list (byte tuples).
+#   2. Delete the cached _headers property in the Request object to force
+#      Starlette to re-parse our modified scope.
+#   3. Keep the aggressive anti-buffering headers in the response.
 # ---------------------------------------------------------------------------
 
 class SSECompressionBypassMiddleware(BaseHTTPMiddleware):
     """
     Intercepts every request whose path starts with /sse and removes the
-    Accept-Encoding header before it reaches any compression middleware or
-    the ASGI application.  This prevents Uvicorn's built-in Brotli / GZip
-    responders from ever touching the SSE stream.
-
-    It also injects the mandatory anti-buffering headers into the response
-    so that Cloudflare, Render, and Nginx proxies forward bytes immediately
-    instead of accumulating them in their internal buffers.
+    Accept-Encoding header by directly manipulating the ASGI scope.
     """
 
     async def dispatch(self, request: Request, call_next):
         if request.url.path.startswith("/sse"):
-            # Strip compression negotiation headers from the incoming request
-            # so that no middleware further down the stack applies compression.
-            headers = dict(request.headers)
-            headers["accept-encoding"] = "identity"
-            # Rebuild the scope with the patched headers
-            request._headers = request.headers.__class__(
-                scope=request.scope,
-                headers=[(k.lower().encode(), v.encode()) for k, v in headers.items()],
-            )
+            # Deep-dive into ASGI scope to strip compression negotiation
+            new_headers = []
+            for k, v in request.scope["headers"]:
+                if k.lower() == b"accept-encoding":
+                    # Force identity (no compression)
+                    new_headers.append((b"accept-encoding", b"identity"))
+                else:
+                    new_headers.append((k, v))
+            
+            # Update the scope with patched headers
+            request.scope["headers"] = new_headers
+            
+            # Clear Starlette's internal header cache so it reads the new scope
+            if "_headers" in request.__dict__:
+                del request.__dict__["_headers"]
 
         response = await call_next(request)
 
@@ -82,7 +79,7 @@ class SSECompressionBypassMiddleware(BaseHTTPMiddleware):
 app = FastAPI(
     title="Kronos Analyst - Gemini v2",
     description="Lightweight Multi-Agent Hedge Fund Analysis (Gemini API, <50MB RAM)",
-    version="2.2.0",
+    version="2.2.1",
 )
 
 # SSE compression bypass MUST be added before CORSMiddleware so it runs first
@@ -105,18 +102,15 @@ async def sse_endpoint(request: Request):
     """
     MCP SSE transport endpoint.
 
-    Version 2.2.0:
-    - SSECompressionBypassMiddleware strips Accept-Encoding before this
-      handler is reached, guaranteeing no Brotli/GZip compression is applied.
-    - All anti-buffering headers are set both here and in the middleware layer
-      for belt-and-suspenders reliability across Cloudflare / Render / Nginx.
+    Version 2.2.1:
+    - SSECompressionBypassMiddleware strips Accept-Encoding via raw ASGI scope
+      manipulation, bypassing Starlette's strict Headers validation.
     """
     scheme = "https" if (os.getenv("RENDER") or request.url.scheme == "https") else request.url.scheme
     messages_url = f"{scheme}://{request.url.netloc}/messages"
 
     async def event_generator():
         # Send an immediate 1 KB padding comment to force the TCP window open
-        # and flush any proxy buffer that requires a minimum payload size.
         yield ": " + (" " * 1024) + "\n\n"
         yield "data: connected\n\n"
         yield f"event: endpoint\ndata: {messages_url}\n\n"
@@ -125,7 +119,7 @@ async def sse_endpoint(request: Request):
             try:
                 if await request.is_disconnected():
                     break
-                # SSE keep-alive comment — sent every 15 s to prevent idle timeouts
+                # SSE keep-alive comment
                 yield ": keep-alive\n\n"
                 await asyncio.sleep(15)
             except asyncio.CancelledError:
@@ -135,8 +129,6 @@ async def sse_endpoint(request: Request):
         event_generator(),
         media_type="text/event-stream",
         headers={
-            # Explicitly set on the StreamingResponse as well; the middleware
-            # will reinforce these on the way out for double protection.
             "Content-Type": "text/event-stream; charset=utf-8",
             "Cache-Control": "no-cache, no-store, no-transform, must-revalidate, max-age=0",
             "X-Accel-Buffering": "no",
@@ -163,7 +155,7 @@ async def messages_endpoint(request: Request):
             "result": {
                 "protocolVersion": "2024-11-05",
                 "capabilities": {"tools": {}},
-                "serverInfo": {"name": "Kronos Analyst Gemini", "version": "2.2.0"},
+                "serverInfo": {"name": "Kronos Analyst Gemini", "version": "2.2.1"},
             },
         }
 
@@ -202,7 +194,7 @@ async def messages_endpoint(request: Request):
             raw_result = {
                 "status": "online",
                 "mode": "gemini-api-v1",
-                "version": "2.2.0",
+                "version": "2.2.1",
                 "gemini_key_configured": os.getenv("GEMINI_API_KEY") is not None
             }
         elif tool_name == "analyze":
@@ -223,7 +215,7 @@ def health():
     return {
         "status": "online",
         "mode": "gemini-api-v1",
-        "version": "2.2.0",
+        "version": "2.2.1",
         "gemini_key_configured": os.getenv("GEMINI_API_KEY") is not None,
         "openai_key_configured": os.getenv("OPENAI_API_KEY") is not None,
         "uptime": int(time.time() - _start_time)
