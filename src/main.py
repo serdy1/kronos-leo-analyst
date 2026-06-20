@@ -1,6 +1,7 @@
 import os
 import json
 import logging
+import asyncio
 from mcp.server.fastmcp import FastMCP
 from dotenv import load_dotenv
 from starlette.applications import Starlette
@@ -49,12 +50,12 @@ async def health_tool() -> str:
     return json.dumps({
         "status": "online",
         "mode": "fastmcp-integrated",
-        "version": "3.1.2"
+        "version": "3.1.3"
     })
 
 # --- ASGI APP DEFINITION ---
-# Instead of using the property directly, we wrap the FastMCP Starlette app
-# to ensure our custom routes (/, /health) take precedence and don't conflict.
+# Simplified version: Use mcp.sse_app directly as uvicorn target 
+# but wrap it with explicit health routes using Starlette Middleware or simple proxying.
 
 async def health_handler(request):
     return JSONResponse({"status": "online"})
@@ -66,15 +67,15 @@ async def root_handler(request):
         "message": "Kronos Analyst MCP is live. Connect via /sse"
     })
 
-# We create a new Starlette app and mount the FastMCP app into it.
-# This is the most reliable way to add root routes to a pre-configured app.
-app = Starlette(
-    routes=[
-        Route("/", root_handler),
-        Route("/health", health_handler),
-        Mount("/", app=mcp.sse_app)
-    ]
-)
+# The most stable way to expose the FastMCP SSE app on Render 
+# while maintaining root health checks.
+mcp_app = mcp.sse_app
+
+# Add routes to the existing mcp_app to avoid Mount() issues
+mcp_app.add_route("/", root_handler)
+mcp_app.add_route("/health", health_handler)
+
+app = mcp_app
 
 if __name__ == "__main__":
     import uvicorn
