@@ -36,20 +36,12 @@ async def health() -> str:
     """Check server health."""
     return json.dumps({
         "status": "online",
-        "mode": "fastmcp-asgi",
-        "version": "3.0.2"
+        "mode": "fastmcp-sse-app",
+        "version": "3.0.3"
     }, indent=2)
 
-# This is the secret sauce for Render:
-# Create a Starlette/FastAPI compatible app from FastMCP
-# In current mcp library, FastMCP itself can be used or we can use the transport
-from starlette.applications import Starlette
-from starlette.routing import Route, Mount
-from mcp.server.sse import SseServerTransport
-
-# We create a simple ASGI app that mounts the MCP server
-# This gives us full control over the server startup
-app = mcp.get_sse_app()
+# FastMCP provides sse_app as a property that returns a Starlette application
+app = mcp.sse_app
 
 if __name__ == "__main__":
     import uvicorn
