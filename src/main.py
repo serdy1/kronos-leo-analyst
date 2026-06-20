@@ -1,7 +1,6 @@
 import os
 import json
 import logging
-import asyncio
 from mcp.server.fastmcp import FastMCP
 from dotenv import load_dotenv
 from starlette.applications import Starlette
@@ -43,20 +42,17 @@ async def analyze(ticker: str) -> str:
         logger.error(f"Error analyzing {ticker}: {str(e)}")
         return f"Error analyzing {ticker}: {str(e)}"
 
-# Define a custom health tool
 @mcp.tool()
 async def health_tool() -> str:
     """Check server health."""
     return json.dumps({
         "status": "online",
         "mode": "fastmcp-integrated",
-        "version": "3.1.3"
+        "version": "3.1.4"
     })
 
 # --- ASGI APP DEFINITION ---
-# Simplified version: Use mcp.sse_app directly as uvicorn target 
-# but wrap it with explicit health routes using Starlette Middleware or simple proxying.
-
+# Root handlers
 async def health_handler(request):
     return JSONResponse({"status": "online"})
 
@@ -67,15 +63,22 @@ async def root_handler(request):
         "message": "Kronos Analyst MCP is live. Connect via /sse"
     })
 
-# The most stable way to expose the FastMCP SSE app on Render 
-# while maintaining root health checks.
-mcp_app = mcp.sse_app
+# The most stable way: Use the instance itself for uvicorn, 
+# and let it handle its own sse routes.
+# We will NOT manually inject routes into sse_app as it causes 500 errors.
+# Instead, we serve mcp directly if the pattern allows, or use the 
+# standalone Starlette app with a Mount if necessary.
 
-# Add routes to the existing mcp_app to avoid Mount() issues
-mcp_app.add_route("/", root_handler)
-mcp_app.add_route("/health", health_handler)
-
-app = mcp_app
+# Let's try the direct Starlette approach with Mount again but with 
+# a different path to ensure /sse remains untouched by the root.
+app = Starlette(
+    routes=[
+        Route("/health", health_handler),
+        Route("/", root_handler),
+        # Mount everything else to the internal SSE app
+        Mount("/", app=mcp.sse_app)
+    ]
+)
 
 if __name__ == "__main__":
     import uvicorn
