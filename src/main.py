@@ -5,6 +5,7 @@ from mcp.server.fastmcp import FastMCP
 from dotenv import load_dotenv
 from starlette.applications import Starlette
 from starlette.responses import JSONResponse
+from starlette.routing import Route
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -48,28 +49,30 @@ async def health_tool() -> str:
     return json.dumps({
         "status": "online",
         "mode": "fastmcp-integrated",
-        "version": "3.1.0"
+        "version": "3.1.1"
     })
 
 # --- ASGI APP DEFINITION ---
-# Standard FastMCP pattern for web deployments:
-# The FastMCP instance provides 'sse_app' which is a Starlette application.
+# We use the built-in Starlette app from FastMCP
 app = mcp.sse_app
 
 # --- ROUTE ALIASES FOR POKE COMPATIBILITY ---
-# FastMCP often mounts its SSE handshake at /sse.
-# We ensure it's available at the root paths Poke might check.
-@app.route("/health")
-async def health_endpoint(request):
+# FastMCP/Starlette routes need to be added carefully.
+# Using app.add_route is safer for late-binding handlers.
+
+async def health_handler(request):
     return JSONResponse({"status": "online"})
 
-@app.route("/")
-async def root_endpoint(request):
+async def root_handler(request):
     return JSONResponse({
         "status": "online",
         "mcp_sse_path": "/sse",
         "message": "Kronos Analyst MCP is live. Connect via /sse"
     })
+
+# Add explicit routes at the root
+app.add_route("/health", health_handler)
+app.add_route("/", root_handler)
 
 if __name__ == "__main__":
     import uvicorn
