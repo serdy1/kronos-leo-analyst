@@ -14,10 +14,9 @@ ENV PYTHONPATH=/app
 
 EXPOSE 8000
 
-# --workers 1   : single worker prevents SSE stream fragmentation across processes
-# --http h11    : forces the pure-Python H11 HTTP parser instead of httptools.
-#                 httptools can buffer response bodies before flushing; h11 sends
-#                 each chunk immediately, which is required for SSE to work through
-#                 Cloudflare and Render proxies without triggering 20-second timeouts.
-# --proxy-headers: trust X-Forwarded-* headers from Render's edge layer
-CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000", "--loop", "uvloop", "--workers", "1", "--proxy-headers", "--http", "h11"]
+# We switch to Gunicorn with UvicornWorker for better stability on Render.
+# --worker-class uvicorn.workers.UvicornWorker : Bridge between Gunicorn and FastAPI
+# --timeout 0 : Disable worker timeouts to allow long-lived SSE connections
+# --keep-alive 5 : Keep TCP connections open for proxies
+# --threads 4 : Allow concurrent handling within a worker
+CMD ["gunicorn", "src.main:app", "-w", "1", "-k", "uvicorn.workers.UvicornWorker", "-b", "0.0.0.0:8000", "--timeout", "0", "--keep-alive", "5", "--proxy-protocol", "--forwarded-allow-ips", "*"]

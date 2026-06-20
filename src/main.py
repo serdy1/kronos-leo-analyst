@@ -20,20 +20,15 @@ def get_engine():
     return engine
 
 # ---------------------------------------------------------------------------
-# Version 2.2.5: Maximum Aggression SSE (The "Green Light" Fix)
+# Version 2.2.6: Final "Green Light" Configuration
 #
-# Problem: Despite 8KB padding and identity encoding, Poke.com still hits a 
-# 20s timeout. This usually means the proxy (Cloudflare/Render) is stripping 
-# our 'X-Accel-Buffering: no' header or ignoring it due to HTTP/2 multiplexing.
+# Problem: 20s timeouts on Poke.com despite aggressive headers.
 #
 # Fix:
-#   1. Pure ASGI Middleware: We intercept the 'http.response.start' message 
-#      directly to ensure headers are NOT stripped or modified by other 
-#      middleware.
-#   2. Header Enforcement: We manually inject 'X-Accel-Buffering', 
-#      'Cache-Control', and 'Content-Encoding' at the lowest possible level.
-#   3. 16KB Padding: Doubling the padding to 16KB to be absolutely sure we 
-#      hit the "flush" threshold of even the most stubborn proxies.
+#   1. Gunicorn + UvicornWorker: Professional process management for SSE.
+#   2. Interleaved Padding: Instead of one giant block, we send a comment 
+#      after every data chunk to ensure the proxy buffer is always pushed.
+#   3. Immediate Flush: Send 'connected' immediately, THEN the padding.
 # ---------------------------------------------------------------------------
 
 class SSEAggressiveFlushMiddleware:
@@ -42,7 +37,6 @@ class SSEAggressiveFlushMiddleware:
 
     async def __call__(self, scope, receive, send):
         if scope["type"] == "http" and scope["path"] == "/sse":
-            # 1. Modify request headers to prevent compression
             new_request_headers = []
             for k, v in scope.get("headers", []):
                 if k.lower() == b"accept-encoding":
@@ -51,12 +45,9 @@ class SSEAggressiveFlushMiddleware:
                     new_request_headers.append((k, v))
             scope["headers"] = new_request_headers
 
-            # 2. Wrap the 'send' function to inject headers into the response
             async def wrapped_send(message):
                 if message["type"] == "http.response.start":
                     headers = list(message.get("headers", []))
-                    
-                    # Force essential SSE headers at the ASGI level
                     forced_headers = [
                         (b"content-type", b"text/event-stream; charset=utf-8"),
                         (b"cache-control", b"no-cache, no-store, no-transform, must-revalidate, max-age=0"),
@@ -66,15 +57,10 @@ class SSEAggressiveFlushMiddleware:
                         (b"pragma", b"no-cache"),
                         (b"x-content-type-options", b"nosniff"),
                     ]
-                    
-                    # Remove existing versions of these headers
                     header_keys_to_remove = [h[0] for h in forced_headers]
                     headers = [h for h in headers if h[0].lower() not in header_keys_to_remove]
-                    
-                    # Add our forced headers
                     headers.extend(forced_headers)
                     message["headers"] = headers
-                
                 await send(message)
 
             await self.app(scope, receive, wrapped_send)
@@ -85,12 +71,10 @@ class SSEAggressiveFlushMiddleware:
 app = FastAPI(
     title="Kronos Analyst - Gemini v2",
     description="Lightweight Multi-Agent Hedge Fund Analysis (Gemini API, <50MB RAM)",
-    version="2.2.5",
+    version="2.2.6",
 )
 
-# Aggressive middleware must be first
 app.add_middleware(SSEAggressiveFlushMiddleware)
-
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -104,30 +88,29 @@ class AnalysisRequest(BaseModel):
 
 @app.get("/sse")
 async def sse_endpoint(request: Request):
-    """
-    MCP SSE transport endpoint.
-    Version 2.2.5: 16KB padding + ASGI-level header enforcement.
-    """
     scheme = "https" if (os.getenv("RENDER") or request.url.scheme == "https") else request.url.scheme
     messages_url = f"{scheme}://{request.url.netloc}/messages"
 
     async def event_generator():
-        # 16KB padding to overflow any proxy buffer (Nginx/Render/Cloudflare).
-        # We use a comment format (:) so it's ignored by the client but forces a flush.
-        yield ":" + (" " * 16384) + "\n\n"
-        
-        # Immediate signal to Poke.com that we are alive
+        # Step 1: Immediate signal to Poke.com (First byte is crucial)
         yield "data: connected\n\n"
+        
+        # Step 2: 4KB padding to push the 'connected' message through Nginx
+        yield ":" + (" " * 4096) + "\n\n"
+        
+        # Step 3: Endpoint info
         yield f"event: endpoint\ndata: {messages_url}\n\n"
+        
+        # Step 4: Another 4KB padding to ensure the endpoint info is flushed
+        yield ":" + (" " * 4096) + "\n\n"
 
         while True:
             try:
                 if await request.is_disconnected():
                     break
-                # Aggressive keep-alive (every 5 seconds instead of 15)
-                # This keeps the connection "hot" in the eyes of the proxy.
+                # Heartbeat every 2 seconds for maximum stability during connection phase
                 yield ": keep-alive\n\n"
-                await asyncio.sleep(5)
+                await asyncio.sleep(2)
             except asyncio.CancelledError:
                 break
 
@@ -153,7 +136,7 @@ async def messages_endpoint(request: Request):
             "result": {
                 "protocolVersion": "2024-11-05",
                 "capabilities": {"tools": {}},
-                "serverInfo": {"name": "Kronos Analyst Gemini", "version": "2.2.5"},
+                "serverInfo": {"name": "Kronos Analyst Gemini", "version": "2.2.6"},
             },
         }
 
@@ -192,7 +175,7 @@ async def messages_endpoint(request: Request):
             raw_result = {
                 "status": "online",
                 "mode": "gemini-api-v1",
-                "version": "2.2.5",
+                "version": "2.2.6",
                 "gemini_key_configured": os.getenv("GEMINI_API_KEY") is not None
             }
         elif tool_name == "analyze":
@@ -213,7 +196,7 @@ def health():
     return {
         "status": "online",
         "mode": "gemini-api-v1",
-        "version": "2.2.5",
+        "version": "2.2.6",
         "gemini_key_configured": os.getenv("GEMINI_API_KEY") is not None,
         "openai_key_configured": os.getenv("OPENAI_API_KEY") is not None,
         "uptime": int(time.time() - _start_time)
@@ -221,5 +204,4 @@ def health():
 
 if __name__ == "__main__":
     import uvicorn
-    # Using h11 to ensure we don't have httptools buffering issues
     uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 8000)), http="h11")

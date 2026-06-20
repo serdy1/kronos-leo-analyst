@@ -1,11 +1,7 @@
 # Core
 fastapi==0.115.6
-# uvicorn[standard] is intentionally NOT used here.
-# The [standard] extra pulls in httptools and brotli, both of which cause
-# automatic response compression that breaks SSE streaming through Cloudflare
-# and Render proxies.  We use the minimal uvicorn build instead and add only
-# uvloop (for performance) and h11 (for correct chunked-flush behaviour).
 uvicorn==0.34.0
+gunicorn==23.0.0
 uvloop==0.21.0
 h11==0.14.0
 pydantic==2.10.4
