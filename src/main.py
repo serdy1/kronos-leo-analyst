@@ -23,7 +23,6 @@ def get_engine():
     global engine
     if engine is None:
         logger.info("Initializing LightweightHedgeFundEngine...")
-        # Note: Absolute import from the 'src' package
         from src.engine import LightweightHedgeFundEngine
         engine = LightweightHedgeFundEngine()
     return engine
@@ -49,31 +48,31 @@ async def health_tool() -> str:
     return json.dumps({
         "status": "online",
         "mode": "fastmcp-integrated",
-        "version": "3.0.9"
+        "version": "3.1.0"
     })
 
 # --- ASGI APP DEFINITION ---
-# FastMCP provides an SSE Starlette app. In the latest versions, 
-# 'sse_app' is a property that returns the Starlette app instance.
-# However, to be absolutely safe and handle both property/method cases:
-def _resolve_app():
-    target = mcp.sse_app
-    if callable(target) and not hasattr(target, "dispatch"):
-        # It's a method (get_sse_app style), call it to get the app
-        return target()
-    return target
+# Standard FastMCP pattern for web deployments:
+# The FastMCP instance provides 'sse_app' which is a Starlette application.
+app = mcp.sse_app
 
-app = _resolve_app()
-
-# Add a basic health check route for Render
+# --- ROUTE ALIASES FOR POKE COMPATIBILITY ---
+# FastMCP often mounts its SSE handshake at /sse.
+# We ensure it's available at the root paths Poke might check.
 @app.route("/health")
 async def health_endpoint(request):
     return JSONResponse({"status": "online"})
 
+@app.route("/")
+async def root_endpoint(request):
+    return JSONResponse({
+        "status": "online",
+        "mcp_sse_path": "/sse",
+        "message": "Kronos Analyst MCP is live. Connect via /sse"
+    })
+
 if __name__ == "__main__":
     import uvicorn
-    # Use the port Render expects
     port = int(os.getenv("PORT", 8000))
     logger.info(f"Starting server on port {port}")
-    # Pass the app instance directly
     uvicorn.run(app, host="0.0.0.0", port=port)
