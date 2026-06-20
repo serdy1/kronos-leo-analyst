@@ -14,9 +14,7 @@ ENV PYTHONPATH=/app
 
 EXPOSE 8000
 
-# We switch to Gunicorn with UvicornWorker for better stability on Render.
-# --worker-class uvicorn.workers.UvicornWorker : Bridge between Gunicorn and FastAPI
-# --timeout 0 : Disable worker timeouts to allow long-lived SSE connections
-# --keep-alive 5 : Keep TCP connections open for proxies
-# --threads 4 : Allow concurrent handling within a worker
-CMD ["gunicorn", "src.main:app", "-w", "1", "-k", "uvicorn.workers.UvicornWorker", "-b", "0.0.0.0:8000", "--timeout", "0", "--keep-alive", "5", "--proxy-protocol", "--forwarded-allow-ips", "*"]
+# FastMCP run command with stateless_http=True
+# This is the most robust way to run MCP on Render Free Tier.
+# It automatically handles the SSE endpoint and headers correctly.
+CMD ["python", "src/main.py"]
