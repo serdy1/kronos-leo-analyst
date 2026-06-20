@@ -5,7 +5,6 @@ from mcp.server.fastmcp import FastMCP
 from dotenv import load_dotenv
 from starlette.applications import Starlette
 from starlette.responses import JSONResponse
-from starlette.routing import Route
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -49,29 +48,15 @@ async def health_tool() -> str:
     return json.dumps({
         "status": "online",
         "mode": "fastmcp-integrated",
-        "version": "3.0.7"
+        "version": "3.0.8"
     })
 
-# --- SSE APP INTEGRATION ---
-# FastMCP.sse_app can be either a property returning a Starlette app 
-# or a method returning one. We wrap it safely.
+# --- ASGI APP DEFINITION ---
+# FastMCP provides an SSE Starlette app. We define 'app' at the top level
+# so uvicorn can find it via 'src.main:app'.
 
-def get_app():
-    try:
-        # Try as a property first
-        app = mcp.sse_app
-        if callable(app) and not isinstance(app, Starlette):
-            # It's a method (like get_sse_app)
-            logger.info("sse_app is a method, calling it...")
-            return app()
-        logger.info("sse_app is a property or already an app.")
-        return app
-    except Exception as e:
-        logger.error(f"Error accessing mcp.sse_app: {e}")
-        # Fallback: Many versions of FastMCP are themselves ASGI apps
-        return mcp
-
-app = get_app()
+# Get the underlying Starlette/ASGI application from FastMCP
+app = mcp.sse_app
 
 # Add a basic health check route for Render
 @app.route("/health")
@@ -82,4 +67,5 @@ if __name__ == "__main__":
     import uvicorn
     port = int(os.getenv("PORT", 8000))
     logger.info(f"Starting server on port {port}")
+    # Run the app instance
     uvicorn.run(app, host="0.0.0.0", port=port)
