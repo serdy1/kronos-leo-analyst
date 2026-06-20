@@ -23,6 +23,7 @@ def get_engine():
     global engine
     if engine is None:
         logger.info("Initializing LightweightHedgeFundEngine...")
+        # Note: Absolute import from the 'src' package
         from src.engine import LightweightHedgeFundEngine
         engine = LightweightHedgeFundEngine()
     return engine
@@ -48,15 +49,21 @@ async def health_tool() -> str:
     return json.dumps({
         "status": "online",
         "mode": "fastmcp-integrated",
-        "version": "3.0.8"
+        "version": "3.0.9"
     })
 
 # --- ASGI APP DEFINITION ---
-# FastMCP provides an SSE Starlette app. We define 'app' at the top level
-# so uvicorn can find it via 'src.main:app'.
+# FastMCP provides an SSE Starlette app. In the latest versions, 
+# 'sse_app' is a property that returns the Starlette app instance.
+# However, to be absolutely safe and handle both property/method cases:
+def _resolve_app():
+    target = mcp.sse_app
+    if callable(target) and not hasattr(target, "dispatch"):
+        # It's a method (get_sse_app style), call it to get the app
+        return target()
+    return target
 
-# Get the underlying Starlette/ASGI application from FastMCP
-app = mcp.sse_app
+app = _resolve_app()
 
 # Add a basic health check route for Render
 @app.route("/health")
@@ -65,7 +72,8 @@ async def health_endpoint(request):
 
 if __name__ == "__main__":
     import uvicorn
+    # Use the port Render expects
     port = int(os.getenv("PORT", 8000))
     logger.info(f"Starting server on port {port}")
-    # Run the app instance
+    # Pass the app instance directly
     uvicorn.run(app, host="0.0.0.0", port=port)
