@@ -11,3 +11,6 @@ yfinance==0.2.54
 # Utils
 httpx>=0.27.0
 python-dotenv==1.0.1
+# Build requirements for numpy/pandas if wheels are not used
+setuptools
+wheel
