@@ -7,12 +7,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Initialize FastMCP server
-# This is the modern, clean way to build MCP servers.
-mcp = FastMCP(
-    "Kronos Analyst",
-    title="Kronos Analyst Gemini",
-    version="3.0.0"
-)
+mcp = FastMCP("Kronos-Analyst")
 
 # Lazy-loaded engine
 engine = None
@@ -28,9 +23,6 @@ def get_engine():
 async def analyze(ticker: str) -> str:
     """
     Multi-agent hedge fund analysis (Buffett, Burry, Graham, etc.) for a given stock ticker.
-    
-    Args:
-        ticker: Stock ticker symbol (e.g. TSLA, AAPL, MSFT)
     """
     eng = get_engine()
     try:
@@ -41,15 +33,25 @@ async def analyze(ticker: str) -> str:
 
 @mcp.tool()
 async def health() -> str:
-    """Check server health and configuration status."""
+    """Check server health."""
     return json.dumps({
         "status": "online",
-        "mode": "fastmcp",
-        "gemini_key_configured": os.getenv("GEMINI_API_KEY") is not None,
-        "version": "3.0.0"
+        "mode": "fastmcp-asgi",
+        "version": "3.0.2"
     }, indent=2)
 
+# This is the secret sauce for Render:
+# Create a Starlette/FastAPI compatible app from FastMCP
+# In current mcp library, FastMCP itself can be used or we can use the transport
+from starlette.applications import Starlette
+from starlette.routing import Route, Mount
+from mcp.server.sse import SseServerTransport
+
+# We create a simple ASGI app that mounts the MCP server
+# This gives us full control over the server startup
+app = mcp.get_sse_app()
+
 if __name__ == "__main__":
-    # FastMCP handles SSE and Proxy headers internally in recent versions.
-    # Running with 'sse' transport will expose /sse and /messages.
-    mcp.run(transport="sse")
+    import uvicorn
+    port = int(os.getenv("PORT", 8000))
+    uvicorn.run(app, host="0.0.0.0", port=port)

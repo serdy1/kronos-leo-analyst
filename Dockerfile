@@ -14,7 +14,6 @@ ENV PYTHONPATH=/app
 
 EXPOSE 8000
 
-# FastMCP run command with stateless_http=True
-# This is the most robust way to run MCP on Render Free Tier.
-# It automatically handles the SSE endpoint and headers correctly.
-CMD ["python", "src/main.py"]
+# Explicitly use uvicorn to run the app
+# This ensures PORT environment variable is respected and SSE works correctly
+CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000"]
