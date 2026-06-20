@@ -3,6 +3,9 @@ import json
 import logging
 from mcp.server.fastmcp import FastMCP
 from dotenv import load_dotenv
+from starlette.applications import Starlette
+from starlette.responses import JSONResponse
+from starlette.routing import Route
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -41,28 +44,42 @@ async def analyze(ticker: str) -> str:
 
 # Define a custom health tool
 @mcp.tool()
-async def health_check() -> str:
+async def health_tool() -> str:
     """Check server health."""
     return json.dumps({
         "status": "online",
-        "mode": "fastmcp-sse",
-        "version": "3.0.6"
+        "mode": "fastmcp-integrated",
+        "version": "3.0.7"
     })
+
+# --- SSE APP INTEGRATION ---
+# FastMCP.sse_app can be either a property returning a Starlette app 
+# or a method returning one. We wrap it safely.
+
+def get_app():
+    try:
+        # Try as a property first
+        app = mcp.sse_app
+        if callable(app) and not isinstance(app, Starlette):
+            # It's a method (like get_sse_app)
+            logger.info("sse_app is a method, calling it...")
+            return app()
+        logger.info("sse_app is a property or already an app.")
+        return app
+    except Exception as e:
+        logger.error(f"Error accessing mcp.sse_app: {e}")
+        # Fallback: Many versions of FastMCP are themselves ASGI apps
+        return mcp
+
+app = get_app()
+
+# Add a basic health check route for Render
+@app.route("/health")
+async def health_endpoint(request):
+    return JSONResponse({"status": "online"})
 
 if __name__ == "__main__":
     import uvicorn
-    # FastMCP creates its own Starlette/FastAPI app under the hood when run via SSE.
-    # The 'as_asgi()' or 'sse_app' properties were causing mismatches in certain versions.
-    # We will use the built-in Starlette app provided by FastMCP.
-    
-    # According to current FastMCP patterns, the sse_app is the property to use.
-    # If the previous attempt with as_asgi() failed, it's likely due to 
-    # as_asgi not being a method or property in this specific version.
-    
     port = int(os.getenv("PORT", 8000))
     logger.info(f"Starting server on port {port}")
-    
-    # We'll use the 'mcp' instance directly if it supports the ASGI protocol, 
-    # or the 'sse_app' if available. 
-    # Most reliable for current FastMCP versions is mcp.sse_app
-    uvicorn.run(mcp.sse_app, host="0.0.0.0", port=port)
+    uvicorn.run(app, host="0.0.0.0", port=port)
