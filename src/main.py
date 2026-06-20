@@ -1,6 +1,7 @@
 import os
 import json
 import logging
+import asyncio
 from mcp.server.fastmcp import FastMCP
 from dotenv import load_dotenv
 from starlette.applications import Starlette
@@ -24,8 +25,13 @@ def get_engine():
     global engine
     if engine is None:
         logger.info("Initializing LightweightHedgeFundEngine...")
-        from src.engine import LightweightHedgeFundEngine
-        engine = LightweightHedgeFundEngine()
+        # Use relative import for the src package structure
+        try:
+            from .engine import LightweightHedgeFundEngine
+            engine = LightweightHedgeFundEngine()
+        except ImportError:
+            from engine import LightweightHedgeFundEngine
+            engine = LightweightHedgeFundEngine()
     return engine
 
 @mcp.tool()
@@ -48,11 +54,10 @@ async def health_tool() -> str:
     return json.dumps({
         "status": "online",
         "mode": "fastmcp-integrated",
-        "version": "3.1.4"
+        "version": "3.2.1"
     })
 
 # --- ASGI APP DEFINITION ---
-# Root handlers
 async def health_handler(request):
     return JSONResponse({"status": "online"})
 
@@ -63,19 +68,13 @@ async def root_handler(request):
         "message": "Kronos Analyst MCP is live. Connect via /sse"
     })
 
-# The most stable way: Use the instance itself for uvicorn, 
-# and let it handle its own sse routes.
-# We will NOT manually inject routes into sse_app as it causes 500 errors.
-# Instead, we serve mcp directly if the pattern allows, or use the 
-# standalone Starlette app with a Mount if necessary.
-
-# Let's try the direct Starlette approach with Mount again but with 
-# a different path to ensure /sse remains untouched by the root.
+# The most stable way to serve FastMCP with custom routes on Render:
+# Create a root Starlette app and mount the mcp.sse_app.
+# We use mcp.sse_app directly as it is the property that returns the Starlette app.
 app = Starlette(
     routes=[
         Route("/health", health_handler),
         Route("/", root_handler),
-        # Mount everything else to the internal SSE app
         Mount("/", app=mcp.sse_app)
     ]
 )
