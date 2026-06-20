@@ -1,12 +1,9 @@
 import os
 import json
 import logging
-import asyncio
 from mcp.server.fastmcp import FastMCP
 from dotenv import load_dotenv
-from starlette.applications import Starlette
 from starlette.responses import JSONResponse
-from starlette.routing import Route, Mount
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -25,11 +22,11 @@ def get_engine():
     global engine
     if engine is None:
         logger.info("Initializing LightweightHedgeFundEngine...")
-        # Use relative import for the src package structure
         try:
-            from .engine import LightweightHedgeFundEngine
+            # In FastMCP/Render environment, direct import or src.engine is usually best
+            from src.engine import LightweightHedgeFundEngine
             engine = LightweightHedgeFundEngine()
-        except ImportError:
+        except Exception:
             from engine import LightweightHedgeFundEngine
             engine = LightweightHedgeFundEngine()
     return engine
@@ -48,36 +45,32 @@ async def analyze(ticker: str) -> str:
         logger.error(f"Error analyzing {ticker}: {str(e)}")
         return f"Error analyzing {ticker}: {str(e)}"
 
+# Define a custom health tool
 @mcp.tool()
 async def health_tool() -> str:
     """Check server health."""
     return json.dumps({
         "status": "online",
         "mode": "fastmcp-integrated",
-        "version": "3.2.1"
+        "version": "3.2.2"
     })
 
 # --- ASGI APP DEFINITION ---
-async def health_handler(request):
+# Direct injection of root and health routes into the FastMCP Starlette app.
+# This avoids the Starlette Mount() 500 error on /sse by keeping the app context unified.
+app = mcp.sse_app
+
+@app.route("/health")
+async def health_endpoint(request):
     return JSONResponse({"status": "online"})
 
-async def root_handler(request):
+@app.route("/")
+async def root_endpoint(request):
     return JSONResponse({
         "status": "online",
         "mcp_sse_path": "/sse",
         "message": "Kronos Analyst MCP is live. Connect via /sse"
     })
-
-# The most stable way to serve FastMCP with custom routes on Render:
-# Create a root Starlette app and mount the mcp.sse_app.
-# We use mcp.sse_app directly as it is the property that returns the Starlette app.
-app = Starlette(
-    routes=[
-        Route("/health", health_handler),
-        Route("/", root_handler),
-        Mount("/", app=mcp.sse_app)
-    ]
-)
 
 if __name__ == "__main__":
     import uvicorn
