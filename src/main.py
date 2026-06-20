@@ -7,7 +7,6 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Initialize FastMCP server
-# Setting 'debug=True' can help L.E.O. diagnose connection issues
 mcp = FastMCP("Kronos-Analyst")
 
 # Lazy-loaded engine
@@ -32,21 +31,20 @@ async def analyze(ticker: str) -> str:
     except Exception as e:
         return f"Error analyzing {ticker}: {str(e)}"
 
+# Define a custom health tool
 @mcp.tool()
-async def health() -> str:
+async def health_check() -> str:
     """Check server health."""
     return json.dumps({
         "status": "online",
         "mode": "fastmcp-asgi",
-        "version": "3.0.4"
-    }, indent=2)
+        "version": "3.0.5"
+    })
 
-# FastMCP implements the ASGI interface directly, so the 'mcp' instance 
-# itself is the ASGI application to be used by uvicorn.
-app = mcp
+# Starlette application for SSE
+app = mcp.as_asgi()
 
 if __name__ == "__main__":
     import uvicorn
     port = int(os.getenv("PORT", 8000))
-    # Note: When running as 'app = mcp', uvicorn should point to the instance
     uvicorn.run(app, host="0.0.0.0", port=port)
