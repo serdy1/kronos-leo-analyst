@@ -20,10 +20,17 @@ def get_engine():
     return engine
 
 # ---------------------------------------------------------------------------
-# Version 2.2.3: Precision SSE Delivery for Render Proxies
+# Version 2.2.4: Aggressive Proxy Buffer Flush
 #
-# Ensures immediate flush via 1KB padding and strict header enforcement.
-# Replaced Starlette's BaseHTTPMiddleware with a pure ASGI implementation.
+# Problem: Proxies like Nginx (Render's edge) and Cloudflare often have 
+# buffer sizes of 4KB or 8KB. Our previous 1KB padding was insufficient to 
+# force an immediate flush, causing the stream to hang and timeout.
+#
+# Fix:
+#   1. Increase initial SSE padding to 8KB (8192 bytes). This "brute-force"
+#      overflows most proxy buffers immediately upon connection.
+#   2. Maintain the ASGI scope manipulation to kill Brotli/GZip compression.
+#   3. Reinforce all anti-buffering headers.
 # ---------------------------------------------------------------------------
 
 class SSECompressionBypassMiddleware:
@@ -46,7 +53,7 @@ class SSECompressionBypassMiddleware:
 app = FastAPI(
     title="Kronos Analyst - Gemini v2",
     description="Lightweight Multi-Agent Hedge Fund Analysis (Gemini API, <50MB RAM)",
-    version="2.2.3",
+    version="2.2.4",
 )
 
 # Register pure ASGI middleware
@@ -67,15 +74,17 @@ class AnalysisRequest(BaseModel):
 async def sse_endpoint(request: Request):
     """
     MCP SSE transport endpoint.
+
+    Version 2.2.4:
+    - Increased padding to 8KB to force Nginx/Cloudflare buffer flush.
     """
     scheme = "https" if (os.getenv("RENDER") or request.url.scheme == "https") else request.url.scheme
     messages_url = f"{scheme}://{request.url.netloc}/messages"
 
     async def event_generator():
-        # IMMEDIATELY yield 1KB padding to force any buffering proxy (Render/Cloudflare) to flush.
-        # This must happen before any async work or awaiting.
-        yield ":" + (" " * 1024) + "\n\n"
-        
+        # Send an immediate 8 KB padding comment to force the TCP window open
+        # and overflow any proxy buffer (Nginx/Render/Cloudflare).
+        yield ":" + (" " * 8192) + "\n\n"
         yield "data: connected\n\n"
         yield f"event: endpoint\ndata: {messages_url}\n\n"
 
@@ -96,7 +105,9 @@ async def sse_endpoint(request: Request):
             "Content-Type": "text/event-stream",
             "Cache-Control": "no-cache, no-store, no-transform, must-revalidate, max-age=0",
             "X-Accel-Buffering": "no",
-            "Connection": "keep-alive"
+            "Connection": "keep-alive",
+            "Content-Encoding": "identity",
+            "Pragma": "no-cache"
         },
     )
 
@@ -117,7 +128,7 @@ async def messages_endpoint(request: Request):
             "result": {
                 "protocolVersion": "2024-11-05",
                 "capabilities": {"tools": {}},
-                "serverInfo": {"name": "Kronos Analyst Gemini", "version": "2.2.3"},
+                "serverInfo": {"name": "Kronos Analyst Gemini", "version": "2.2.4"},
             },
         }
 
@@ -156,7 +167,7 @@ async def messages_endpoint(request: Request):
             raw_result = {
                 "status": "online",
                 "mode": "gemini-api-v1",
-                "version": "2.2.3",
+                "version": "2.2.4",
                 "gemini_key_configured": os.getenv("GEMINI_API_KEY") is not None
             }
         elif tool_name == "analyze":
@@ -177,7 +188,7 @@ def health():
     return {
         "status": "online",
         "mode": "gemini-api-v1",
-        "version": "2.2.3",
+        "version": "2.2.4",
         "gemini_key_configured": os.getenv("GEMINI_API_KEY") is not None,
         "openai_key_configured": os.getenv("OPENAI_API_KEY") is not None,
         "uptime": int(time.time() - _start_time)
