@@ -5,8 +5,6 @@ import os
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
-from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.types import ASGIApp
 from pydantic import BaseModel
 from typing import Optional
 
@@ -22,68 +20,37 @@ def get_engine():
     return engine
 
 # ---------------------------------------------------------------------------
-# Version 2.2.1: Hard SSE Compression Bypass (ASGI Scope Fix)
+# Version 2.2.2: Pure ASGI Middleware for SSE Compression Bypass
 #
-# Problem: Version 2.2.0 used Starlette's Headers object to rebuild headers,
-# which triggered an "AssertionError: Cannot set both headers and scope."
-# Starlette is strict about not mixing high-level Headers objects with raw
-# ASGI scopes.
-#
-# Fix:
-#   1. Directly manipulate the raw ASGI scope["headers"] list (byte tuples).
-#   2. Delete the cached _headers property in the Request object to force
-#      Starlette to re-parse our modified scope.
-#   3. Keep the aggressive anti-buffering headers in the response.
+# Replaced Starlette's BaseHTTPMiddleware with a pure ASGI implementation.
+# BaseHTTPMiddleware buffers the response to apply its logic, which can break
+# streaming. A pure ASGI middleware avoids this buffering.
 # ---------------------------------------------------------------------------
 
-class SSECompressionBypassMiddleware(BaseHTTPMiddleware):
-    """
-    Intercepts every request whose path starts with /sse and removes the
-    Accept-Encoding header by directly manipulating the ASGI scope.
-    """
+class SSECompressionBypassMiddleware:
+    def __init__(self, app):
+        self.app = app
 
-    async def dispatch(self, request: Request, call_next):
-        if request.url.path.startswith("/sse"):
-            # Deep-dive into ASGI scope to strip compression negotiation
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http" and scope["path"] == "/sse":
             new_headers = []
-            for k, v in request.scope["headers"]:
+            for k, v in scope.get("headers", []):
                 if k.lower() == b"accept-encoding":
-                    # Force identity (no compression)
+                    # Force identity (no compression) to prevent proxy buffering
                     new_headers.append((b"accept-encoding", b"identity"))
                 else:
                     new_headers.append((k, v))
-            
-            # Update the scope with patched headers
-            request.scope["headers"] = new_headers
-            
-            # Clear Starlette's internal header cache so it reads the new scope
-            if "_headers" in request.__dict__:
-                del request.__dict__["_headers"]
-
-        response = await call_next(request)
-
-        if request.url.path.startswith("/sse"):
-            # Force all anti-buffering / anti-compression headers on the way out
-            response.headers["Content-Type"] = "text/event-stream; charset=utf-8"
-            response.headers["Cache-Control"] = "no-cache, no-store, no-transform, must-revalidate, max-age=0"
-            response.headers["X-Accel-Buffering"] = "no"
-            response.headers["Connection"] = "keep-alive"
-            response.headers["Content-Encoding"] = "identity"
-            response.headers["Pragma"] = "no-cache"
-            # Remove any compression-related headers that upstream may have set
-            response.headers.pop("transfer-encoding", None)
-
-        return response
+            scope["headers"] = new_headers
+        await self.app(scope, receive, send)
 
 
 app = FastAPI(
     title="Kronos Analyst - Gemini v2",
     description="Lightweight Multi-Agent Hedge Fund Analysis (Gemini API, <50MB RAM)",
-    version="2.2.1",
+    version="2.2.2",
 )
 
-# SSE compression bypass MUST be added before CORSMiddleware so it runs first
-# in the middleware stack (Starlette processes middleware in LIFO order).
+# Register pure ASGI middleware
 app.add_middleware(SSECompressionBypassMiddleware)
 
 app.add_middleware(
@@ -101,10 +68,6 @@ class AnalysisRequest(BaseModel):
 async def sse_endpoint(request: Request):
     """
     MCP SSE transport endpoint.
-
-    Version 2.2.1:
-    - SSECompressionBypassMiddleware strips Accept-Encoding via raw ASGI scope
-      manipulation, bypassing Starlette's strict Headers validation.
     """
     scheme = "https" if (os.getenv("RENDER") or request.url.scheme == "https") else request.url.scheme
     messages_url = f"{scheme}://{request.url.netloc}/messages"
@@ -155,7 +118,7 @@ async def messages_endpoint(request: Request):
             "result": {
                 "protocolVersion": "2024-11-05",
                 "capabilities": {"tools": {}},
-                "serverInfo": {"name": "Kronos Analyst Gemini", "version": "2.2.1"},
+                "serverInfo": {"name": "Kronos Analyst Gemini", "version": "2.2.2"},
             },
         }
 
@@ -194,7 +157,7 @@ async def messages_endpoint(request: Request):
             raw_result = {
                 "status": "online",
                 "mode": "gemini-api-v1",
-                "version": "2.2.1",
+                "version": "2.2.2",
                 "gemini_key_configured": os.getenv("GEMINI_API_KEY") is not None
             }
         elif tool_name == "analyze":
@@ -215,7 +178,7 @@ def health():
     return {
         "status": "online",
         "mode": "gemini-api-v1",
-        "version": "2.2.1",
+        "version": "2.2.2",
         "gemini_key_configured": os.getenv("GEMINI_API_KEY") is not None,
         "openai_key_configured": os.getenv("OPENAI_API_KEY") is not None,
         "uptime": int(time.time() - _start_time)
