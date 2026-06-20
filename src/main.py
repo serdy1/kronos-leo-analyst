@@ -20,11 +20,10 @@ def get_engine():
     return engine
 
 # ---------------------------------------------------------------------------
-# Version 2.2.2: Pure ASGI Middleware for SSE Compression Bypass
+# Version 2.2.3: Precision SSE Delivery for Render Proxies
 #
+# Ensures immediate flush via 1KB padding and strict header enforcement.
 # Replaced Starlette's BaseHTTPMiddleware with a pure ASGI implementation.
-# BaseHTTPMiddleware buffers the response to apply its logic, which can break
-# streaming. A pure ASGI middleware avoids this buffering.
 # ---------------------------------------------------------------------------
 
 class SSECompressionBypassMiddleware:
@@ -47,7 +46,7 @@ class SSECompressionBypassMiddleware:
 app = FastAPI(
     title="Kronos Analyst - Gemini v2",
     description="Lightweight Multi-Agent Hedge Fund Analysis (Gemini API, <50MB RAM)",
-    version="2.2.2",
+    version="2.2.3",
 )
 
 # Register pure ASGI middleware
@@ -73,8 +72,10 @@ async def sse_endpoint(request: Request):
     messages_url = f"{scheme}://{request.url.netloc}/messages"
 
     async def event_generator():
-        # Send an immediate 1 KB padding comment to force the TCP window open
-        yield ": " + (" " * 1024) + "\n\n"
+        # IMMEDIATELY yield 1KB padding to force any buffering proxy (Render/Cloudflare) to flush.
+        # This must happen before any async work or awaiting.
+        yield ":" + (" " * 1024) + "\n\n"
+        
         yield "data: connected\n\n"
         yield f"event: endpoint\ndata: {messages_url}\n\n"
 
@@ -92,12 +93,10 @@ async def sse_endpoint(request: Request):
         event_generator(),
         media_type="text/event-stream",
         headers={
-            "Content-Type": "text/event-stream; charset=utf-8",
+            "Content-Type": "text/event-stream",
             "Cache-Control": "no-cache, no-store, no-transform, must-revalidate, max-age=0",
             "X-Accel-Buffering": "no",
-            "Connection": "keep-alive",
-            "Content-Encoding": "identity",
-            "Pragma": "no-cache",
+            "Connection": "keep-alive"
         },
     )
 
@@ -118,7 +117,7 @@ async def messages_endpoint(request: Request):
             "result": {
                 "protocolVersion": "2024-11-05",
                 "capabilities": {"tools": {}},
-                "serverInfo": {"name": "Kronos Analyst Gemini", "version": "2.2.2"},
+                "serverInfo": {"name": "Kronos Analyst Gemini", "version": "2.2.3"},
             },
         }
 
@@ -157,7 +156,7 @@ async def messages_endpoint(request: Request):
             raw_result = {
                 "status": "online",
                 "mode": "gemini-api-v1",
-                "version": "2.2.2",
+                "version": "2.2.3",
                 "gemini_key_configured": os.getenv("GEMINI_API_KEY") is not None
             }
         elif tool_name == "analyze":
@@ -178,7 +177,7 @@ def health():
     return {
         "status": "online",
         "mode": "gemini-api-v1",
-        "version": "2.2.2",
+        "version": "2.2.3",
         "gemini_key_configured": os.getenv("GEMINI_API_KEY") is not None,
         "openai_key_configured": os.getenv("OPENAI_API_KEY") is not None,
         "uptime": int(time.time() - _start_time)
