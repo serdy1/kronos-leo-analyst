@@ -3,6 +3,7 @@ import json
 import logging
 from mcp.server.fastmcp import FastMCP
 from dotenv import load_dotenv
+from starlette.responses import JSONResponse
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -12,7 +13,8 @@ logger = logging.getLogger("kronos-mcp")
 load_dotenv()
 
 # Initialize FastMCP server
-mcp = FastMCP("Kronos-Analyst")
+# debug=True will provide more details in logs if it crashes
+mcp = FastMCP("Kronos-Analyst", debug=True)
 
 # Lazy-loaded engine
 engine = None
@@ -22,14 +24,17 @@ def get_engine():
     if engine is None:
         logger.info("Initializing LightweightHedgeFundEngine...")
         try:
+            # Absolute import
             from src.engine import LightweightHedgeFundEngine
             engine = LightweightHedgeFundEngine()
-        except Exception:
+        except Exception as e:
+            logger.warning(f"Failed absolute import: {e}. Trying relative...")
             try:
+                # Relative import
                 from engine import LightweightHedgeFundEngine
                 engine = LightweightHedgeFundEngine()
-            except Exception as e:
-                logger.error(f"Critical error loading engine: {e}")
+            except Exception as ex:
+                logger.error(f"Critical error loading engine: {ex}")
                 return None
     return engine
 
@@ -50,9 +55,21 @@ async def analyze(ticker: str) -> str:
         return f"Error analyzing {ticker}: {str(e)}"
 
 # FastMCP implements the ASGI interface directly.
-# Using mcp.run() in __main__ is standard, but Render/Uvicorn needs the app object.
-# mcp.as_asgi() is the explicit way to get the Starlette/ASGI app.
+# mcp.as_asgi() creates a Starlette app that handles /sse and /messages.
 app = mcp.as_asgi()
+
+# Adding explicit health check to the Starlette app created by as_asgi()
+@app.route("/health")
+async def health(request):
+    return JSONResponse({"status": "online", "source": "starlette_manual"})
+
+@app.route("/")
+async def root(request):
+    return JSONResponse({
+        "status": "online",
+        "mcp_sse_path": "/sse",
+        "message": "Kronos Analyst MCP is live. Connect via /sse"
+    })
 
 if __name__ == "__main__":
     import uvicorn
