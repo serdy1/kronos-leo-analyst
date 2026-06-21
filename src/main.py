@@ -66,7 +66,7 @@ async def root_endpoint(request):
         "message": "Kronos Analyst MCP is live. Connect via /sse"
     })
 
-# --- ASGI APP SETUP (v3.5.3) ---
+# --- ASGI APP SETUP ---
 # Direct interception of the Host header to bypass internal MCP/Starlette validation.
 
 mcp_asgi_app = mcp.sse_app()
@@ -85,21 +85,14 @@ mcp_asgi_app.add_middleware(
     expose_headers=["*"],
 )
 
-# --- THE HOST PATCH (v3.5.3) ---
+# --- THE HOST PATCH ---
 # We wrap the app in a raw ASGI middleware that sanitizes the Host header 
-# BEFORE it reaches FastMCP's internal logic. This is the most surgical breach possible.
+# BEFORE it reaches FastMCP's internal logic.
 async def host_sanitizer_middleware(scope, receive, send):
     if scope["type"] in ("http", "websocket"):
-        headers = []
-        # Find the Host header and force it to a safe value or remove it if problematic
-        # But usually, providing the correct public host or a wildcard-safe one is better.
-        # Here, we'll re-construct headers without a restrictive host if needed.
         new_headers = []
         for name, value in scope.get("headers", []):
             if name.lower() == b"host":
-                # Force the host to match what the internal server might expect, 
-                # or simply match the Render URL to avoid 421.
-                # Since 421 means "Misdirected", we'll try to pass the Render host explicitly.
                 render_host = os.environ.get("RENDER_EXTERNAL_HOSTNAME", "kronos-leo-analyst.onrender.com").encode()
                 new_headers.append((b"host", render_host))
             else:
@@ -108,13 +101,17 @@ async def host_sanitizer_middleware(scope, receive, send):
     
     await mcp_asgi_app(scope, receive, send)
 
+# IMPORTANT: Render/Gunicorn expects 'app' at the module level.
+# We assign our patched middleware to the 'app' variable.
+app = host_sanitizer_middleware
+
 # Render entry point
 if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 10000))
     logger.info(f"Starting uvicorn on 0.0.0.0:{port}")
     uvicorn.run(
-        host_sanitizer_middleware, 
+        app, 
         host="0.0.0.0", 
         port=port, 
         proxy_headers=True, 
