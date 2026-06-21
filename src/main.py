@@ -67,12 +67,29 @@ async def root_endpoint(request):
     })
 
 # Define the final application structure
-# We use mcp.as_asgi() to get the Starlette/ASGI app.
-# If mcp.as_asgi() fails, we'll try the .app property.
-try:
-    mcp_asgi_app = mcp.as_asgi()
-except AttributeError:
-    mcp_asgi_app = mcp.app
+# Starlette Mount logic: mounting at "/" can swallow specific sub-paths 
+# depending on how the underlying app is built. 
+# We explicitly mount the ASGI app provided by FastMCP.
+# Note: In most recent MCP SDKs, FastMCP serves its own Starlette app 
+# at the root when run as ASGI.
+
+# Get the ASGI application from FastMCP
+# We check all possible attributes to avoid AttributeError
+mcp_asgi_app = None
+for attr in ["as_asgi", "app", "_app", "sse_app"]:
+    if hasattr(mcp, attr):
+        val = getattr(mcp, attr)
+        if callable(val) and attr == "as_asgi":
+            mcp_asgi_app = val()
+        else:
+            mcp_asgi_app = val
+        if mcp_asgi_app:
+            logger.info(f"Using FastMCP attribute '{attr}' for ASGI app")
+            break
+
+if not mcp_asgi_app:
+    # Fallback to the object itself if it implements ASGI
+    mcp_asgi_app = mcp
 
 app = Starlette(
     debug=True,
@@ -86,6 +103,8 @@ app = Starlette(
 # Render entry point
 if __name__ == "__main__":
     import uvicorn
-    port = int(os.environ.get("PORT", 8000))
+    # Render standard port is 10000, default to 8000 for local testing
+    port = int(os.environ.get("PORT", 10000))
     logger.info(f"Starting uvicorn on 0.0.0.0:{port}")
+    # Run uvicorn with the app object
     uvicorn.run(app, host="0.0.0.0", port=port)
