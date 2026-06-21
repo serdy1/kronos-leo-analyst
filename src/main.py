@@ -66,15 +66,11 @@ async def root_endpoint(request):
         "message": "Kronos Analyst MCP is live. Connect via /sse"
     })
 
-# Define the final application structure
-# Starlette Mount logic: mounting at "/" can swallow specific sub-paths 
-# depending on how the underlying app is built. 
-# We explicitly mount the ASGI app provided by FastMCP.
-# Note: In most recent MCP SDKs, FastMCP serves its own Starlette app 
-# at the root when run as ASGI.
+# --- ASGI APP SETUP (v3.4.3) ---
+# We wrap FastMCP in Starlette to provide /health for Render/Poke
+# while ensuring /sse and other paths pass through UNMODIFIED.
 
 # Get the ASGI application from FastMCP
-# We check all possible attributes to avoid AttributeError
 mcp_asgi_app = None
 for attr in ["as_asgi", "app", "_app", "sse_app"]:
     if hasattr(mcp, attr):
@@ -88,23 +84,32 @@ for attr in ["as_asgi", "app", "_app", "sse_app"]:
             break
 
 if not mcp_asgi_app:
-    # Fallback to the object itself if it implements ASGI
     mcp_asgi_app = mcp
 
-app = Starlette(
-    debug=True,
-    routes=[
-        Route("/health", health_endpoint),
-        Route("/", root_endpoint),
-        Mount("/", app=mcp_asgi_app)
-    ]
-)
+# Final Starlette app with priority routing
+app = Starlette(debug=True)
+
+# 1. Define specific routes first
+@app.route("/health")
+async def health(request):
+    return JSONResponse({"status": "online"})
+
+@app.route("/")
+async def root(request):
+    return JSONResponse({
+        "status": "online",
+        "mcp_sse_path": "/sse",
+        "message": "Kronos Analyst MCP is live. Connect via /sse"
+    })
+
+# 2. Mount FastMCP at the root last
+# This ensures that specific routes above are handled first,
+# and everything else (like /sse, /messages) goes to FastMCP's router unmodified.
+app.mount("/", app=mcp_asgi_app)
 
 # Render entry point
 if __name__ == "__main__":
     import uvicorn
-    # Render standard port is 10000, default to 8000 for local testing
     port = int(os.environ.get("PORT", 10000))
     logger.info(f"Starting uvicorn on 0.0.0.0:{port}")
-    # Run uvicorn with the app object
     uvicorn.run(app, host="0.0.0.0", port=port)
