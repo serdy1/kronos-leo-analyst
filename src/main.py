@@ -4,7 +4,6 @@ import logging
 import sys
 
 # Ensure 'src' is in the path for reliable imports on Render
-# The files are likely located in /workspace/user/src/ on Render if 'src' is a package
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 if BASE_DIR not in sys.path:
     sys.path.append(BASE_DIR)
@@ -14,6 +13,8 @@ if SRC_DIR not in sys.path:
 
 from mcp.server.fastmcp import FastMCP
 from dotenv import load_dotenv
+from starlette.applications import Starlette
+from starlette.routing import Route, Mount
 from starlette.responses import JSONResponse
 
 # Configure logging
@@ -34,13 +35,11 @@ def get_engine():
     if engine is None:
         logger.info("Initializing LightweightHedgeFundEngine...")
         try:
-            # Try to import from the src package directly
             from src.engine import LightweightHedgeFundEngine
             engine = LightweightHedgeFundEngine()
         except (ImportError, ModuleNotFoundError) as e:
             logger.warning(f"Absolute src import failed: {e}. Trying flat import...")
             try:
-                # Try to import assuming src is in path or flat structure
                 from engine import LightweightHedgeFundEngine
                 engine = LightweightHedgeFundEngine()
             except Exception as ex:
@@ -71,18 +70,14 @@ async def health_tool() -> str:
     return json.dumps({
         "status": "online",
         "mode": "fastmcp-integrated",
-        "version": "3.3.6"
+        "version": "3.3.7"
     })
 
-# Use the sse_app property directly which is the Starlette application
-app = mcp.sse_app
-
-# Manual routes for Poke validation
-@app.route("/health")
+# --- ASGI APP DEFINITION ---
+# Handler functions for Starlette
 async def health_endpoint(request):
     return JSONResponse({"status": "online"})
 
-@app.route("/")
 async def root_endpoint(request):
     return JSONResponse({
         "status": "online",
@@ -90,9 +85,22 @@ async def root_endpoint(request):
         "message": "Kronos Analyst MCP is live. Connect via /sse"
     })
 
-# The uvicorn entry point is used by Render if the start command is 'python src/main.py'
+# Wrap FastMCP using Starlette as suggested to avoid AttributeError
+# We use mcp.as_asgi() to get the underlying Starlette/ASGI app for MCP
+mcp_asgi_app = mcp.as_asgi()
+
+app = Starlette(
+    routes=[
+        Route("/health", health_endpoint),
+        Route("/", root_endpoint),
+        Mount("/", app=mcp_asgi_app)
+    ]
+)
+
+# Render entry point
 if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 10000))
     logger.info(f"Starting uvicorn on 0.0.0.0:{port}")
-    uvicorn.run("src.main:app" if os.path.exists(os.path.join(BASE_DIR, "src/main.py")) else "main:app", host="0.0.0.0", port=port, log_level="debug", factory=False)
+    # uvicorn.run accepts the app object directly
+    uvicorn.run(app, host="0.0.0.0", port=port, log_level="debug")
