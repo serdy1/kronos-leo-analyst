@@ -3,7 +3,9 @@ import json
 import logging
 from mcp.server.fastmcp import FastMCP
 from dotenv import load_dotenv
+from starlette.applications import Starlette
 from starlette.responses import JSONResponse
+from starlette.routing import Route, Mount
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -23,12 +25,15 @@ def get_engine():
     if engine is None:
         logger.info("Initializing LightweightHedgeFundEngine...")
         try:
-            # In FastMCP/Render environment, direct import or src.engine is usually best
             from src.engine import LightweightHedgeFundEngine
             engine = LightweightHedgeFundEngine()
         except Exception:
-            from engine import LightweightHedgeFundEngine
-            engine = LightweightHedgeFundEngine()
+            try:
+                from engine import LightweightHedgeFundEngine
+                engine = LightweightHedgeFundEngine()
+            except Exception as e:
+                logger.error(f"Critical error loading engine: {e}")
+                return None
     return engine
 
 @mcp.tool()
@@ -38,6 +43,8 @@ async def analyze(ticker: str) -> str:
     """
     logger.info(f"Running analysis for ticker: {ticker}")
     eng = get_engine()
+    if not eng:
+        return "Error: Engine not initialized."
     try:
         raw_result = await eng.run_multi_agent_analysis(ticker)
         return json.dumps(raw_result, indent=2)
@@ -45,32 +52,38 @@ async def analyze(ticker: str) -> str:
         logger.error(f"Error analyzing {ticker}: {str(e)}")
         return f"Error analyzing {ticker}: {str(e)}"
 
-# Define a custom health tool
 @mcp.tool()
 async def health_tool() -> str:
     """Check server health."""
     return json.dumps({
         "status": "online",
         "mode": "fastmcp-integrated",
-        "version": "3.2.2"
+        "version": "3.3.0"
     })
 
 # --- ASGI APP DEFINITION ---
-# Direct injection of root and health routes into the FastMCP Starlette app.
-# This avoids the Starlette Mount() 500 error on /sse by keeping the app context unified.
-app = mcp.sse_app
-
-@app.route("/health")
-async def health_endpoint(request):
+async def health_handler(request):
     return JSONResponse({"status": "online"})
 
-@app.route("/")
-async def root_endpoint(request):
+async def root_handler(request):
     return JSONResponse({
         "status": "online",
         "mcp_sse_path": "/sse",
         "message": "Kronos Analyst MCP is live. Connect via /sse"
     })
+
+# Re-implementing a clean Starlette wrapper to isolate the FastMCP SSE app.
+# The previous 500 error was likely due to direct route injection into mcp.sse_app.
+# We mount mcp.sse_app to a sub-path or use it as a standalone app if possible.
+mcp_sse_app = mcp.sse_app
+
+app = Starlette(
+    routes=[
+        Route("/health", health_handler),
+        Route("/", root_handler),
+        Mount("/", app=mcp_sse_app)
+    ]
+)
 
 if __name__ == "__main__":
     import uvicorn
