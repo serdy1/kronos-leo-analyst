@@ -3,8 +3,10 @@ import json
 import logging
 import sys
 
-# Ensure reliable imports
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+# Ensure 'src' is in the path for reliable imports on Render
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+if BASE_DIR not in sys.path:
+    sys.path.append(BASE_DIR)
 
 from mcp.server.fastmcp import FastMCP
 from dotenv import load_dotenv
@@ -12,16 +14,14 @@ from starlette.applications import Starlette
 from starlette.routing import Route, Mount
 from starlette.responses import JSONResponse
 
-# Configure logging
-logging.basicConfig(level=logging.DEBUG)
+# Configure logging to see startup details
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("kronos-mcp")
 
 # Load environment variables
 load_dotenv()
 
 # Initialize FastMCP server
-# Setting 'sse=True' explicitly in some versions might help, 
-# but FastMCP usually detects it.
 mcp = FastMCP("Kronos-Analyst", debug=True)
 
 # Lazy-loaded engine
@@ -55,17 +55,7 @@ async def analyze(ticker: str) -> str:
         logger.error(f"Error analyzing {ticker}: {str(e)}")
         return f"Error analyzing {ticker}: {str(e)}"
 
-# Define a custom health tool
-@mcp.tool()
-async def health_tool() -> str:
-    """Check server health."""
-    return json.dumps({
-        "status": "online",
-        "mode": "fastmcp-manual-starlette",
-        "version": "3.4.0"
-    })
-
-# --- ASGI APP DEFINITION ---
+# Handler functions for Starlette
 async def health_endpoint(request):
     return JSONResponse({"status": "online"})
 
@@ -76,21 +66,20 @@ async def root_endpoint(request):
         "message": "Kronos Analyst MCP is live. Connect via /sse"
     })
 
-# The 500 error on /sse is likely because Mount("/") was swallowing or 
-# incorrectly delegating the sub-paths to mcp.app.
-# FastMCP usually serves SSE on /sse and messages on /messages by default.
-# We mount mcp.app explicitly and ensure the discovery routes are prioritized.
-
-# In FastMCP, the starlette app is 'mcp.app'.
-mcp_asgi = mcp.app
+# Define the final application structure
+# We use mcp.as_asgi() to get the Starlette/ASGI app.
+# If mcp.as_asgi() fails, we'll try the .app property.
+try:
+    mcp_asgi_app = mcp.as_asgi()
+except AttributeError:
+    mcp_asgi_app = mcp.app
 
 app = Starlette(
     debug=True,
     routes=[
         Route("/health", health_endpoint),
         Route("/", root_endpoint),
-        # Mount the MCP app at the root so it can handle its own /sse and /messages paths
-        Mount("/", app=mcp_asgi)
+        Mount("/", app=mcp_asgi_app)
     ]
 )
 
@@ -99,4 +88,4 @@ if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 8000))
     logger.info(f"Starting uvicorn on 0.0.0.0:{port}")
-    uvicorn.run(app, host="0.0.0.0", port=port, log_level="debug")
+    uvicorn.run(app, host="0.0.0.0", port=port)
