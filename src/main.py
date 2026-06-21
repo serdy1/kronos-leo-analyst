@@ -3,13 +3,8 @@ import json
 import logging
 import sys
 
-# Ensure 'src' is in the path for reliable imports on Render
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-if BASE_DIR not in sys.path:
-    sys.path.append(BASE_DIR)
-SRC_DIR = os.path.join(BASE_DIR, "src")
-if SRC_DIR not in sys.path:
-    sys.path.append(SRC_DIR)
+# Add the current directory to sys.path
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from mcp.server.fastmcp import FastMCP
 from dotenv import load_dotenv
@@ -35,16 +30,12 @@ def get_engine():
     if engine is None:
         logger.info("Initializing LightweightHedgeFundEngine...")
         try:
-            from src.engine import LightweightHedgeFundEngine
+            # We are in 'src' directory, engine.py is also in 'src'
+            from engine import LightweightHedgeFundEngine
             engine = LightweightHedgeFundEngine()
-        except (ImportError, ModuleNotFoundError) as e:
-            logger.warning(f"Absolute src import failed: {e}. Trying flat import...")
-            try:
-                from engine import LightweightHedgeFundEngine
-                engine = LightweightHedgeFundEngine()
-            except Exception as ex:
-                logger.error(f"Critical error loading engine: {ex}")
-                return None
+        except Exception as e:
+            logger.error(f"Critical error loading engine: {e}")
+            return None
     return engine
 
 @mcp.tool()
@@ -70,7 +61,7 @@ async def health_tool() -> str:
     return json.dumps({
         "status": "online",
         "mode": "fastmcp-integrated",
-        "version": "3.3.8"
+        "version": "3.3.9"
     })
 
 # --- ASGI APP DEFINITION ---
@@ -84,19 +75,25 @@ async def root_endpoint(request):
         "message": "Kronos Analyst MCP is live. Connect via /sse"
     })
 
-# The FastMCP property for the ASGI application is 'sse_app'.
-# We wrap it in Starlette to support Poke discovery routes (root and health).
+# FastMCP doesn't have as_asgi() or sse_app in some versions.
+# Standard way to get the Starlette app is via the .app property.
+# We wrap it to provide /health and / routes for Poke.
+# In FastMCP, the underlying Starlette app is often at 'mcp.app'.
+# If 'mcp.app' doesn't exist, we'll see it in the logs.
+
+mcp_app = mcp.app
+
 app = Starlette(
     routes=[
         Route("/health", health_endpoint),
         Route("/", root_endpoint),
-        Mount("/", app=mcp.sse_app)
+        Mount("/", app=mcp_app)
     ]
 )
 
 # Render entry point
 if __name__ == "__main__":
     import uvicorn
-    port = int(os.environ.get("PORT", 10000))
+    port = int(os.environ.get("PORT", 8000))
     logger.info(f"Starting uvicorn on 0.0.0.0:{port}")
     uvicorn.run(app, host="0.0.0.0", port=port, log_level="debug")
