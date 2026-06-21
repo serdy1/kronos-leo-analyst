@@ -4,13 +4,19 @@ import logging
 import sys
 
 # Ensure 'src' is in the path for reliable imports on Render
-sys.path.append(os.path.join(os.path.dirname(__file__), "src"))
+# The files are likely located in /workspace/user/src/ on Render if 'src' is a package
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+if BASE_DIR not in sys.path:
+    sys.path.append(BASE_DIR)
+SRC_DIR = os.path.join(BASE_DIR, "src")
+if SRC_DIR not in sys.path:
+    sys.path.append(SRC_DIR)
 
 from mcp.server.fastmcp import FastMCP
 from dotenv import load_dotenv
 from starlette.responses import JSONResponse
 
-# Configure logging to be as verbose as possible
+# Configure logging
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger("kronos-mcp")
 
@@ -18,7 +24,6 @@ logger = logging.getLogger("kronos-mcp")
 load_dotenv()
 
 # Initialize FastMCP server
-# FastMCP integrates everything.
 mcp = FastMCP("Kronos-Analyst", debug=True)
 
 # Lazy-loaded engine
@@ -29,13 +34,14 @@ def get_engine():
     if engine is None:
         logger.info("Initializing LightweightHedgeFundEngine...")
         try:
-            # We try standard import first
-            from engine import LightweightHedgeFundEngine
+            # Try to import from the src package directly
+            from src.engine import LightweightHedgeFundEngine
             engine = LightweightHedgeFundEngine()
-        except ImportError as e:
-            logger.warning(f"Standard import failed: {e}. Trying absolute src import...")
+        except (ImportError, ModuleNotFoundError) as e:
+            logger.warning(f"Absolute src import failed: {e}. Trying flat import...")
             try:
-                from src.engine import LightweightHedgeFundEngine
+                # Try to import assuming src is in path or flat structure
+                from engine import LightweightHedgeFundEngine
                 engine = LightweightHedgeFundEngine()
             except Exception as ex:
                 logger.error(f"Critical error loading engine: {ex}")
@@ -58,39 +64,35 @@ async def analyze(ticker: str) -> str:
         logger.error(f"Error analyzing {ticker}: {str(e)}")
         return f"Error analyzing {ticker}: {str(e)}"
 
-# Define a custom health tool within FastMCP
+# Define a custom health tool
 @mcp.tool()
 async def health_tool() -> str:
     """Check server health."""
     return json.dumps({
         "status": "online",
         "mode": "fastmcp-integrated",
-        "version": "3.3.5"
+        "version": "3.3.6"
     })
 
 # Use the sse_app property directly which is the Starlette application
 app = mcp.sse_app
 
-# Manual routes are added to sse_app which is already a fully formed Starlette app.
+# Manual routes for Poke validation
 @app.route("/health")
 async def health_endpoint(request):
-    logger.debug("Health endpoint hit")
     return JSONResponse({"status": "online"})
 
 @app.route("/")
 async def root_endpoint(request):
-    logger.debug("Root endpoint hit")
     return JSONResponse({
         "status": "online",
         "mcp_sse_path": "/sse",
         "message": "Kronos Analyst MCP is live. Connect via /sse"
     })
 
-# Render entry point
+# The uvicorn entry point is used by Render if the start command is 'python src/main.py'
 if __name__ == "__main__":
     import uvicorn
-    # Render provides PORT, default to 10000
     port = int(os.environ.get("PORT", 10000))
     logger.info(f"Starting uvicorn on 0.0.0.0:{port}")
-    # Run uvicorn - binding to 0.0.0.0 is critical for Render
-    uvicorn.run(app, host="0.0.0.0", port=port, log_level="debug")
+    uvicorn.run("src.main:app" if os.path.exists(os.path.join(BASE_DIR, "src/main.py")) else "main:app", host="0.0.0.0", port=port, log_level="debug", factory=False)
