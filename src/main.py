@@ -14,9 +14,10 @@ from starlette.applications import Starlette
 from starlette.routing import Route, Mount
 from starlette.responses import JSONResponse
 from starlette.middleware.cors import CORSMiddleware
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 # Configure logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger("kronos-mcp")
 
 # Load environment variables
@@ -67,17 +68,26 @@ async def root_endpoint(request):
         "message": "Kronos Analyst MCP is live. Connect via /sse"
     })
 
-# --- ASGI APP SETUP (v3.4.8) ---
-# The "Invalid Host header" (421) error is coming from the internal AnyIO/Starlette
-# web server inside FastMCP when it detects a host mismatch.
-# Since we are wrapping it in another Starlette app, the Host header must be handled carefully.
-# We will use the 'mcp.sse_app()' but we'll try to bypass its internal restrictions 
-# by mounting it and ensuring uvicorn doesn't over-validate.
-
+# --- ASGI APP SETUP (v3.4.9) ---
+# Retrieve and patch the internal FastMCP app
 mcp_asgi_app = mcp.sse_app()
 
-# Final Starlette app
+# Patch the internal app's middleware to remove any TrustedHostMiddleware
+if hasattr(mcp_asgi_app, "user_middleware"):
+    logger.info(f"Original internal middleware: {mcp_asgi_app.user_middleware}")
+    mcp_asgi_app.user_middleware = [
+        m for m in mcp_asgi_app.user_middleware 
+        if getattr(m, "cls", None) is not TrustedHostMiddleware
+    ]
+    # Rebuild stack to apply changes
+    mcp_asgi_app.middleware_stack = mcp_asgi_app.build_middleware_stack()
+    logger.info("Internal TrustedHostMiddleware removed (if existed)")
+
+# Final Starlette app (Outer wrapper)
 app = Starlette(debug=True)
+
+# Add TrustedHostMiddleware with wildcard to the outer app to be safe
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=["*"])
 
 # Wide-open CORS for SSE
 app.add_middleware(
@@ -102,7 +112,7 @@ async def root(request):
         "message": "Kronos Analyst MCP is live. Connect via /sse"
     })
 
-# 2. Mount FastMCP at root
+# 2. Mount patched FastMCP at root
 app.mount("/", app=mcp_asgi_app)
 
 # Render entry point
@@ -110,8 +120,6 @@ if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 10000))
     logger.info(f"Starting uvicorn on 0.0.0.0:{port}")
-    # uvicorn.run: we use --proxy-headers and --forwarded-allow-ips='*' 
-    # but we also set the log_level to debug to catch the exact rejection point.
     uvicorn.run(
         app, 
         host="0.0.0.0", 
