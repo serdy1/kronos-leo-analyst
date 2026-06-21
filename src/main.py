@@ -11,9 +11,12 @@ if BASE_DIR not in sys.path:
 from mcp.server.fastmcp import FastMCP
 from dotenv import load_dotenv
 from starlette.responses import JSONResponse
+from starlette.routing import Route
+from starlette.middleware.cors import CORSMiddleware
+from starlette.applications import Starlette
 
 # Configure logging
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("kronos-mcp")
 
 # Load environment variables
@@ -53,16 +56,7 @@ async def analyze(ticker: str) -> str:
         logger.error(f"Error analyzing {ticker}: {str(e)}")
         return f"Error analyzing {ticker}: {str(e)}"
 
-# --- ASGI APP SETUP (v3.5.1) ---
-# We use FastMCP's built-in Starlette app and patch it directly.
-# This avoids wrapping/mounting issues that might be confusing host detection.
-
-app = mcp.sse_app()
-
-# Patch the app's routing to include our health check and root info
-from starlette.routing import Route
-from starlette.middleware.cors import CORSMiddleware
-
+# Handler functions
 async def health_endpoint(request):
     return JSONResponse({"status": "online"})
 
@@ -73,12 +67,35 @@ async def root_endpoint(request):
         "message": "Kronos Analyst MCP is live. Connect via /sse"
     })
 
-# Inject routes directly into FastMCP's own router
-app.routes.insert(0, Route("/health", health_endpoint))
-app.routes.insert(0, Route("/", root_endpoint))
+# --- ASGI APP SETUP (v3.5.2) ---
+# We use the built-in app but WE MANUALLY REMOVE any hidden TrustedHostMiddleware
+# that might be causing the 421 error inside the FastMCP-generated app.
 
-# Ensure CORS is permissive on the native app
-app.add_middleware(
+mcp_asgi_app = mcp.sse_app()
+
+# Patch: Recursively check and remove TrustedHostMiddleware from the app's middleware list
+try:
+    from starlette.middleware.trustedhost import TrustedHostMiddleware
+    # Starlette apps store middleware in .user_middleware
+    if hasattr(mcp_asgi_app, "user_middleware"):
+        original_len = len(mcp_asgi_app.user_middleware)
+        mcp_asgi_app.user_middleware = [
+            m for m in mcp_asgi_app.user_middleware 
+            if getattr(m, "cls", None) is not TrustedHostMiddleware
+        ]
+        if len(mcp_asgi_app.user_middleware) < original_len:
+            logger.info("Successfully removed TrustedHostMiddleware from internal app.")
+            # Rebuild the middleware stack to apply changes
+            mcp_asgi_app.middleware_stack = mcp_asgi_app.build_middleware_stack()
+except Exception as e:
+    logger.error(f"Failed to patch internal middleware: {e}")
+
+# Inject Poke discovery routes
+mcp_asgi_app.routes.insert(0, Route("/health", health_endpoint))
+mcp_asgi_app.routes.insert(0, Route("/", root_endpoint))
+
+# Wide-open CORS
+mcp_asgi_app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_credentials=True,
@@ -92,9 +109,10 @@ if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 10000))
     logger.info(f"Starting uvicorn on 0.0.0.0:{port}")
-    # Run the native FastMCP app directly to minimize host/proxy issues
+    # We must ensure uvicorn doesn't do its own host validation
+    # proxy_headers=True is essential for Render
     uvicorn.run(
-        app, 
+        mcp_asgi_app, 
         host="0.0.0.0", 
         port=port, 
         proxy_headers=True, 
