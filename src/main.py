@@ -10,10 +10,7 @@ if BASE_DIR not in sys.path:
 
 from mcp.server.fastmcp import FastMCP
 from dotenv import load_dotenv
-from starlette.applications import Starlette
-from starlette.routing import Route, Mount
 from starlette.responses import JSONResponse
-from starlette.middleware.cors import CORSMiddleware
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG)
@@ -56,7 +53,16 @@ async def analyze(ticker: str) -> str:
         logger.error(f"Error analyzing {ticker}: {str(e)}")
         return f"Error analyzing {ticker}: {str(e)}"
 
-# Handler functions for Starlette
+# --- ASGI APP SETUP (v3.5.1) ---
+# We use FastMCP's built-in Starlette app and patch it directly.
+# This avoids wrapping/mounting issues that might be confusing host detection.
+
+app = mcp.sse_app()
+
+# Patch the app's routing to include our health check and root info
+from starlette.routing import Route
+from starlette.middleware.cors import CORSMiddleware
+
 async def health_endpoint(request):
     return JSONResponse({"status": "online"})
 
@@ -67,41 +73,31 @@ async def root_endpoint(request):
         "message": "Kronos Analyst MCP is live. Connect via /sse"
     })
 
-# --- ASGI APP SETUP (v3.5.0) ---
-# We are moving away from Starlette's 'Mount' at "/" which might be causing the host issues.
-# Instead, we define a custom ASGI app that handles routes manually and proxies the rest to FastMCP.
+# Inject routes directly into FastMCP's own router
+app.routes.insert(0, Route("/health", health_endpoint))
+app.routes.insert(0, Route("/", root_endpoint))
 
-mcp_asgi_app = mcp.sse_app()
-
-async def app(scope, receive, send):
-    if scope["type"] == "http":
-        path = scope["path"]
-        if path == "/health":
-            response = JSONResponse({"status": "online"})
-            await response(scope, receive, send)
-            return
-        elif path == "/":
-            response = JSONResponse({
-                "status": "online",
-                "mcp_sse_path": "/sse",
-                "message": "Kronos Analyst MCP is live. Connect via /sse"
-            })
-            await response(scope, receive, send)
-            return
-    
-    # Proxy all other requests (including /sse, /messages) directly to FastMCP
-    # By passing the scope unmodified, we avoid Starlette's Mount stripping or Host validation.
-    await mcp_asgi_app(scope, receive, send)
+# Ensure CORS is permissive on the native app
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+    expose_headers=["*"],
+)
 
 # Render entry point
 if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 10000))
     logger.info(f"Starting uvicorn on 0.0.0.0:{port}")
+    # Run the native FastMCP app directly to minimize host/proxy issues
     uvicorn.run(
         app, 
         host="0.0.0.0", 
         port=port, 
         proxy_headers=True, 
-        forwarded_allow_ips="*"
+        forwarded_allow_ips="*",
+        log_level="debug"
     )
