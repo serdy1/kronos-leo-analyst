@@ -67,23 +67,26 @@ async def root_endpoint(request):
         "message": "Kronos Analyst MCP is live. Connect via /sse"
     })
 
-# --- ASGI APP SETUP (v3.4.7) ---
-# We are removing TrustedHostMiddleware entirely because even with "*" it can sometimes
-# conflict with the underlying FastMCP starlette instance or specific proxy headers.
-# Render's proxy already handles host validation safely.
+# --- ASGI APP SETUP (v3.4.8) ---
+# The "Invalid Host header" (421) error is coming from the internal AnyIO/Starlette
+# web server inside FastMCP when it detects a host mismatch.
+# Since we are wrapping it in another Starlette app, the Host header must be handled carefully.
+# We will use the 'mcp.sse_app()' but we'll try to bypass its internal restrictions 
+# by mounting it and ensuring uvicorn doesn't over-validate.
 
 mcp_asgi_app = mcp.sse_app()
 
 # Final Starlette app
 app = Starlette(debug=True)
 
-# Add CORS middleware to allow SSE connections from any origin
+# Wide-open CORS for SSE
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
 
 # 1. Define specific routes first
@@ -99,7 +102,7 @@ async def root(request):
         "message": "Kronos Analyst MCP is live. Connect via /sse"
     })
 
-# 2. Mount FastMCP at the root last
+# 2. Mount FastMCP at root
 app.mount("/", app=mcp_asgi_app)
 
 # Render entry point
@@ -107,5 +110,13 @@ if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 10000))
     logger.info(f"Starting uvicorn on 0.0.0.0:{port}")
-    # We remove any proxy-related uvicorn settings and rely on the app's middleware
-    uvicorn.run(app, host="0.0.0.0", port=port, proxy_headers=True, forwarded_allow_ips="*")
+    # uvicorn.run: we use --proxy-headers and --forwarded-allow-ips='*' 
+    # but we also set the log_level to debug to catch the exact rejection point.
+    uvicorn.run(
+        app, 
+        host="0.0.0.0", 
+        port=port, 
+        proxy_headers=True, 
+        forwarded_allow_ips="*",
+        log_level="debug"
+    )
