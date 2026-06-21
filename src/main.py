@@ -13,8 +13,7 @@ logger = logging.getLogger("kronos-mcp")
 load_dotenv()
 
 # Initialize FastMCP server
-# FastMCP integrates everything. We avoid manual route decoration on as_asgi() 
-# as it may be interfering with the underlying app's setup.
+# debug=True provides more details in logs if it crashes
 mcp = FastMCP("Kronos-Analyst", debug=True)
 
 # Lazy-loaded engine
@@ -25,11 +24,13 @@ def get_engine():
     if engine is None:
         logger.info("Initializing LightweightHedgeFundEngine...")
         try:
+            # Absolute import
             from src.engine import LightweightHedgeFundEngine
             engine = LightweightHedgeFundEngine()
         except Exception as e:
             logger.warning(f"Failed absolute import: {e}. Trying relative...")
             try:
+                # Relative import
                 from engine import LightweightHedgeFundEngine
                 engine = LightweightHedgeFundEngine()
             except Exception as ex:
@@ -60,7 +61,7 @@ async def health_tool() -> str:
     return json.dumps({
         "status": "online",
         "mode": "fastmcp-integrated",
-        "version": "3.3.3"
+        "version": "3.3.4"
     })
 
 # Use the sse_app property directly which is the Starlette application
@@ -79,8 +80,11 @@ async def root_endpoint(request):
         "message": "Kronos Analyst MCP is live. Connect via /sse"
     })
 
+# Ensure the server binds to the correct port for Render
 if __name__ == "__main__":
     import uvicorn
-    port = int(os.getenv("PORT", 8000))
-    logger.info(f"Starting server on port {port}")
+    # Render provides PORT, default to 10000 which is Render's standard fallback
+    port = int(os.environ.get("PORT", 10000))
+    logger.info(f"Starting uvicorn on 0.0.0.0:{port}")
+    # Run uvicorn - binding to 0.0.0.0 is critical for Render to detect the open port
     uvicorn.run(app, host="0.0.0.0", port=port)
