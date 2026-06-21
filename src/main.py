@@ -13,6 +13,7 @@ from dotenv import load_dotenv
 from starlette.applications import Starlette
 from starlette.routing import Route, Mount
 from starlette.responses import JSONResponse
+from starlette.middleware.cors import CORSMiddleware
 
 # Configure logging to see startup details
 logging.basicConfig(level=logging.INFO)
@@ -66,16 +67,21 @@ async def root_endpoint(request):
         "message": "Kronos Analyst MCP is live. Connect via /sse"
     })
 
-# --- ASGI APP SETUP (v3.4.4) ---
-# We wrap FastMCP in Starlette to provide /health for Render/Poke
-# while ensuring /sse and other paths pass through UNMODIFIED.
-
+# --- ASGI APP SETUP (v3.4.5) ---
 # FastMCP.sse_app is a method that returns the actual Starlette application.
-# Calling it here to get the callable ASGI instance.
 mcp_asgi_app = mcp.sse_app()
 
-# Final Starlette app with priority routing
+# Final Starlette app with priority routing and CORS fix
 app = Starlette(debug=True)
+
+# Add CORS middleware to allow SSE connections from any origin
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # 1. Define specific routes first
 @app.route("/health")
@@ -91,8 +97,6 @@ async def root(request):
     })
 
 # 2. Mount FastMCP at the root last
-# This ensures that specific routes above are handled first,
-# and everything else (like /sse, /messages) goes to FastMCP's router unmodified.
 app.mount("/", app=mcp_asgi_app)
 
 # Render entry point
