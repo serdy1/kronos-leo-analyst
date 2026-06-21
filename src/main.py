@@ -70,11 +70,10 @@ async def health_tool() -> str:
     return json.dumps({
         "status": "online",
         "mode": "fastmcp-integrated",
-        "version": "3.3.7"
+        "version": "3.3.8"
     })
 
 # --- ASGI APP DEFINITION ---
-# Handler functions for Starlette
 async def health_endpoint(request):
     return JSONResponse({"status": "online"})
 
@@ -85,15 +84,13 @@ async def root_endpoint(request):
         "message": "Kronos Analyst MCP is live. Connect via /sse"
     })
 
-# Wrap FastMCP using Starlette as suggested to avoid AttributeError
-# We use mcp.as_asgi() to get the underlying Starlette/ASGI app for MCP
-mcp_asgi_app = mcp.as_asgi()
-
+# The FastMCP property for the ASGI application is 'sse_app'.
+# We wrap it in Starlette to support Poke discovery routes (root and health).
 app = Starlette(
     routes=[
         Route("/health", health_endpoint),
         Route("/", root_endpoint),
-        Mount("/", app=mcp_asgi_app)
+        Mount("/", app=mcp.sse_app)
     ]
 )
 
@@ -102,5 +99,4 @@ if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 10000))
     logger.info(f"Starting uvicorn on 0.0.0.0:{port}")
-    # uvicorn.run accepts the app object directly
     uvicorn.run(app, host="0.0.0.0", port=port, log_level="debug")
