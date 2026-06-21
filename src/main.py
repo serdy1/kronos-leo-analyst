@@ -66,25 +66,13 @@ async def root_endpoint(request):
         "message": "Kronos Analyst MCP is live. Connect via /sse"
     })
 
-# --- ASGI APP SETUP (v3.4.3) ---
+# --- ASGI APP SETUP (v3.4.4) ---
 # We wrap FastMCP in Starlette to provide /health for Render/Poke
 # while ensuring /sse and other paths pass through UNMODIFIED.
 
-# Get the ASGI application from FastMCP
-mcp_asgi_app = None
-for attr in ["as_asgi", "app", "_app", "sse_app"]:
-    if hasattr(mcp, attr):
-        val = getattr(mcp, attr)
-        if callable(val) and attr == "as_asgi":
-            mcp_asgi_app = val()
-        else:
-            mcp_asgi_app = val
-        if mcp_asgi_app:
-            logger.info(f"Using FastMCP attribute '{attr}' for ASGI app")
-            break
-
-if not mcp_asgi_app:
-    mcp_asgi_app = mcp
+# FastMCP.sse_app is a method that returns the actual Starlette application.
+# Calling it here to get the callable ASGI instance.
+mcp_asgi_app = mcp.sse_app()
 
 # Final Starlette app with priority routing
 app = Starlette(debug=True)
