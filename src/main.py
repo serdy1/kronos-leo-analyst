@@ -14,7 +14,6 @@ from starlette.applications import Starlette
 from starlette.routing import Route, Mount
 from starlette.responses import JSONResponse
 from starlette.middleware.cors import CORSMiddleware
-from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG)
@@ -68,52 +67,31 @@ async def root_endpoint(request):
         "message": "Kronos Analyst MCP is live. Connect via /sse"
     })
 
-# --- ASGI APP SETUP (v3.4.9) ---
-# Retrieve and patch the internal FastMCP app
+# --- ASGI APP SETUP (v3.5.0) ---
+# We are moving away from Starlette's 'Mount' at "/" which might be causing the host issues.
+# Instead, we define a custom ASGI app that handles routes manually and proxies the rest to FastMCP.
+
 mcp_asgi_app = mcp.sse_app()
 
-# Patch the internal app's middleware to remove any TrustedHostMiddleware
-if hasattr(mcp_asgi_app, "user_middleware"):
-    logger.info(f"Original internal middleware: {mcp_asgi_app.user_middleware}")
-    mcp_asgi_app.user_middleware = [
-        m for m in mcp_asgi_app.user_middleware 
-        if getattr(m, "cls", None) is not TrustedHostMiddleware
-    ]
-    # Rebuild stack to apply changes
-    mcp_asgi_app.middleware_stack = mcp_asgi_app.build_middleware_stack()
-    logger.info("Internal TrustedHostMiddleware removed (if existed)")
-
-# Final Starlette app (Outer wrapper)
-app = Starlette(debug=True)
-
-# Add TrustedHostMiddleware with wildcard to the outer app to be safe
-app.add_middleware(TrustedHostMiddleware, allowed_hosts=["*"])
-
-# Wide-open CORS for SSE
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-    expose_headers=["*"],
-)
-
-# 1. Define specific routes first
-@app.route("/health")
-async def health(request):
-    return JSONResponse({"status": "online"})
-
-@app.route("/")
-async def root(request):
-    return JSONResponse({
-        "status": "online",
-        "mcp_sse_path": "/sse",
-        "message": "Kronos Analyst MCP is live. Connect via /sse"
-    })
-
-# 2. Mount patched FastMCP at root
-app.mount("/", app=mcp_asgi_app)
+async def app(scope, receive, send):
+    if scope["type"] == "http":
+        path = scope["path"]
+        if path == "/health":
+            response = JSONResponse({"status": "online"})
+            await response(scope, receive, send)
+            return
+        elif path == "/":
+            response = JSONResponse({
+                "status": "online",
+                "mcp_sse_path": "/sse",
+                "message": "Kronos Analyst MCP is live. Connect via /sse"
+            })
+            await response(scope, receive, send)
+            return
+    
+    # Proxy all other requests (including /sse, /messages) directly to FastMCP
+    # By passing the scope unmodified, we avoid Starlette's Mount stripping or Host validation.
+    await mcp_asgi_app(scope, receive, send)
 
 # Render entry point
 if __name__ == "__main__":
@@ -125,6 +103,5 @@ if __name__ == "__main__":
         host="0.0.0.0", 
         port=port, 
         proxy_headers=True, 
-        forwarded_allow_ips="*",
-        log_level="debug"
+        forwarded_allow_ips="*"
     )
