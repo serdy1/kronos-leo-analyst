@@ -49,9 +49,10 @@ async def analyze(ticker: str) -> str:
         logger.error(f"Error analyzing {ticker}: {str(e)}")
         return f"Error analyzing {ticker}: {str(e)}"
 
-# FastMCP implements standard health tools and handles SSE natively.
-# We will run the MCP instance directly.
-app = mcp
+# FastMCP implements the ASGI interface directly.
+# Using mcp.run() in __main__ is standard, but Render/Uvicorn needs the app object.
+# mcp.as_asgi() is the explicit way to get the Starlette/ASGI app.
+app = mcp.as_asgi()
 
 if __name__ == "__main__":
     import uvicorn
