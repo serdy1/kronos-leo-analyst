@@ -1,19 +1,24 @@
 import os
 import json
 import logging
+import sys
+
+# Ensure 'src' is in the path for reliable imports on Render
+sys.path.append(os.path.join(os.path.dirname(__file__), "src"))
+
 from mcp.server.fastmcp import FastMCP
 from dotenv import load_dotenv
 from starlette.responses import JSONResponse
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
+# Configure logging to be as verbose as possible
+logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger("kronos-mcp")
 
 # Load environment variables
 load_dotenv()
 
 # Initialize FastMCP server
-# debug=True provides more details in logs if it crashes
+# FastMCP integrates everything.
 mcp = FastMCP("Kronos-Analyst", debug=True)
 
 # Lazy-loaded engine
@@ -24,14 +29,13 @@ def get_engine():
     if engine is None:
         logger.info("Initializing LightweightHedgeFundEngine...")
         try:
-            # Absolute import
-            from src.engine import LightweightHedgeFundEngine
+            # We try standard import first
+            from engine import LightweightHedgeFundEngine
             engine = LightweightHedgeFundEngine()
-        except Exception as e:
-            logger.warning(f"Failed absolute import: {e}. Trying relative...")
+        except ImportError as e:
+            logger.warning(f"Standard import failed: {e}. Trying absolute src import...")
             try:
-                # Relative import
-                from engine import LightweightHedgeFundEngine
+                from src.engine import LightweightHedgeFundEngine
                 engine = LightweightHedgeFundEngine()
             except Exception as ex:
                 logger.error(f"Critical error loading engine: {ex}")
@@ -61,7 +65,7 @@ async def health_tool() -> str:
     return json.dumps({
         "status": "online",
         "mode": "fastmcp-integrated",
-        "version": "3.3.4"
+        "version": "3.3.5"
     })
 
 # Use the sse_app property directly which is the Starlette application
@@ -70,21 +74,23 @@ app = mcp.sse_app
 # Manual routes are added to sse_app which is already a fully formed Starlette app.
 @app.route("/health")
 async def health_endpoint(request):
+    logger.debug("Health endpoint hit")
     return JSONResponse({"status": "online"})
 
 @app.route("/")
 async def root_endpoint(request):
+    logger.debug("Root endpoint hit")
     return JSONResponse({
         "status": "online",
         "mcp_sse_path": "/sse",
         "message": "Kronos Analyst MCP is live. Connect via /sse"
     })
 
-# Ensure the server binds to the correct port for Render
+# Render entry point
 if __name__ == "__main__":
     import uvicorn
-    # Render provides PORT, default to 10000 which is Render's standard fallback
+    # Render provides PORT, default to 10000
     port = int(os.environ.get("PORT", 10000))
     logger.info(f"Starting uvicorn on 0.0.0.0:{port}")
-    # Run uvicorn - binding to 0.0.0.0 is critical for Render to detect the open port
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    # Run uvicorn - binding to 0.0.0.0 is critical for Render
+    uvicorn.run(app, host="0.0.0.0", port=port, log_level="debug")
