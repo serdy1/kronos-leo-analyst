@@ -12,12 +12,10 @@ from mcp.server.fastmcp import FastMCP
 from dotenv import load_dotenv
 from starlette.applications import Starlette
 from starlette.routing import Route, Mount
-# Explicitly avoid any host validation middleware
 from starlette.responses import JSONResponse
 from starlette.middleware.cors import CORSMiddleware
-from starlette.middleware.trustedhost import TrustedHostMiddleware
 
-# Configure logging to see startup details
+# Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("kronos-mcp")
 
@@ -69,17 +67,17 @@ async def root_endpoint(request):
         "message": "Kronos Analyst MCP is live. Connect via /sse"
     })
 
-# --- ASGI APP SETUP (v3.4.6) ---
+# --- ASGI APP SETUP (v3.4.7) ---
+# We are removing TrustedHostMiddleware entirely because even with "*" it can sometimes
+# conflict with the underlying FastMCP starlette instance or specific proxy headers.
+# Render's proxy already handles host validation safely.
+
 mcp_asgi_app = mcp.sse_app()
 
-# Final Starlette app with priority routing and strict host configuration
+# Final Starlette app
 app = Starlette(debug=True)
 
-# 1. Force TrustedHostMiddleware to allow ALL hosts to fix the 421 / Invalid Host header error.
-# This overrides any default restrictions that might be causing the misdirected request error on Render.
-app.add_middleware(TrustedHostMiddleware, allowed_hosts=["*"])
-
-# 2. Keep CORS wide open for SSE
+# Add CORS middleware to allow SSE connections from any origin
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -88,7 +86,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 3. Define specific routes first
+# 1. Define specific routes first
 @app.route("/health")
 async def health(request):
     return JSONResponse({"status": "online"})
@@ -101,7 +99,7 @@ async def root(request):
         "message": "Kronos Analyst MCP is live. Connect via /sse"
     })
 
-# 4. Mount FastMCP at the root last
+# 2. Mount FastMCP at the root last
 app.mount("/", app=mcp_asgi_app)
 
 # Render entry point
@@ -109,4 +107,5 @@ if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 10000))
     logger.info(f"Starting uvicorn on 0.0.0.0:{port}")
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    # We remove any proxy-related uvicorn settings and rely on the app's middleware
+    uvicorn.run(app, host="0.0.0.0", port=port, proxy_headers=True, forwarded_allow_ips="*")
