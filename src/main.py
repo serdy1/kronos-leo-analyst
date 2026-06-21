@@ -13,7 +13,8 @@ logger = logging.getLogger("kronos-mcp")
 load_dotenv()
 
 # Initialize FastMCP server
-# debug=True will provide more details in logs if it crashes
+# FastMCP integrates everything. We avoid manual route decoration on as_asgi() 
+# as it may be interfering with the underlying app's setup.
 mcp = FastMCP("Kronos-Analyst", debug=True)
 
 # Lazy-loaded engine
@@ -24,13 +25,11 @@ def get_engine():
     if engine is None:
         logger.info("Initializing LightweightHedgeFundEngine...")
         try:
-            # Absolute import
             from src.engine import LightweightHedgeFundEngine
             engine = LightweightHedgeFundEngine()
         except Exception as e:
             logger.warning(f"Failed absolute import: {e}. Trying relative...")
             try:
-                # Relative import
                 from engine import LightweightHedgeFundEngine
                 engine = LightweightHedgeFundEngine()
             except Exception as ex:
@@ -54,17 +53,26 @@ async def analyze(ticker: str) -> str:
         logger.error(f"Error analyzing {ticker}: {str(e)}")
         return f"Error analyzing {ticker}: {str(e)}"
 
-# FastMCP implements the ASGI interface directly.
-# mcp.as_asgi() creates a Starlette app that handles /sse and /messages.
-app = mcp.as_asgi()
+# Define a custom health tool within FastMCP
+@mcp.tool()
+async def health_tool() -> str:
+    """Check server health."""
+    return json.dumps({
+        "status": "online",
+        "mode": "fastmcp-integrated",
+        "version": "3.3.3"
+    })
 
-# Adding explicit health check to the Starlette app created by as_asgi()
+# Use the sse_app property directly which is the Starlette application
+app = mcp.sse_app
+
+# Manual routes are added to sse_app which is already a fully formed Starlette app.
 @app.route("/health")
-async def health(request):
-    return JSONResponse({"status": "online", "source": "starlette_manual"})
+async def health_endpoint(request):
+    return JSONResponse({"status": "online"})
 
 @app.route("/")
-async def root(request):
+async def root_endpoint(request):
     return JSONResponse({
         "status": "online",
         "mcp_sse_path": "/sse",
