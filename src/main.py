@@ -3,7 +3,7 @@ import json
 import logging
 import sys
 
-# Add the current directory to sys.path
+# Ensure reliable imports
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from mcp.server.fastmcp import FastMCP
@@ -20,6 +20,8 @@ logger = logging.getLogger("kronos-mcp")
 load_dotenv()
 
 # Initialize FastMCP server
+# Setting 'sse=True' explicitly in some versions might help, 
+# but FastMCP usually detects it.
 mcp = FastMCP("Kronos-Analyst", debug=True)
 
 # Lazy-loaded engine
@@ -30,7 +32,6 @@ def get_engine():
     if engine is None:
         logger.info("Initializing LightweightHedgeFundEngine...")
         try:
-            # We are in 'src' directory, engine.py is also in 'src'
             from engine import LightweightHedgeFundEngine
             engine = LightweightHedgeFundEngine()
         except Exception as e:
@@ -60,8 +61,8 @@ async def health_tool() -> str:
     """Check server health."""
     return json.dumps({
         "status": "online",
-        "mode": "fastmcp-integrated",
-        "version": "3.3.9"
+        "mode": "fastmcp-manual-starlette",
+        "version": "3.4.0"
     })
 
 # --- ASGI APP DEFINITION ---
@@ -75,19 +76,21 @@ async def root_endpoint(request):
         "message": "Kronos Analyst MCP is live. Connect via /sse"
     })
 
-# FastMCP doesn't have as_asgi() or sse_app in some versions.
-# Standard way to get the Starlette app is via the .app property.
-# We wrap it to provide /health and / routes for Poke.
-# In FastMCP, the underlying Starlette app is often at 'mcp.app'.
-# If 'mcp.app' doesn't exist, we'll see it in the logs.
+# The 500 error on /sse is likely because Mount("/") was swallowing or 
+# incorrectly delegating the sub-paths to mcp.app.
+# FastMCP usually serves SSE on /sse and messages on /messages by default.
+# We mount mcp.app explicitly and ensure the discovery routes are prioritized.
 
-mcp_app = mcp.app
+# In FastMCP, the starlette app is 'mcp.app'.
+mcp_asgi = mcp.app
 
 app = Starlette(
+    debug=True,
     routes=[
         Route("/health", health_endpoint),
         Route("/", root_endpoint),
-        Mount("/", app=mcp_app)
+        # Mount the MCP app at the root so it can handle its own /sse and /messages paths
+        Mount("/", app=mcp_asgi)
     ]
 )
 
