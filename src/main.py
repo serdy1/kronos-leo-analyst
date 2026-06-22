@@ -67,47 +67,29 @@ async def root_endpoint(request):
         "message": "Kronos Analyst MCP is live. Connect via /mcp/sse"
     })
 
-# --- v3.5.9: THE WILD-CARD HOST STRATEGY ---
-# If Render/Cloudflare gives 421, it's because it dislikes the Host header mismatch.
-# We will STOP explicitly overwriting the Host header with a fixed string, 
-# and instead pass through whatever host Render's proxy is providing internally, 
-# OR use a more permissive matching.
+# --- v3.6.0: ROOT MOUNT STRATEGY ---
+# We mount the official sse_app directly to root (/) to prevent double-nesting (/mcp/mcp/sse).
+# This ensures /mcp/sse and /mcp/messages resolve exactly where the Poke client expects them.
 
-mcp_app = mcp.sse_app()
+mcp_asgi_app = mcp.sse_app()
 
-main_app = Starlette(
-    debug=True,
-    routes=[
-        Route("/health", health_endpoint),
-        Route("/", root_endpoint),
-        Mount("/mcp", mcp_app),
-    ]
-)
+# Patch internal routes for health and root discovery
+mcp_asgi_app.routes.insert(0, Route("/health", health_endpoint))
+mcp_asgi_app.routes.insert(0, Route("/", root_endpoint))
 
-# Wide-open CORS - vital for cross-origin SSE
-main_app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-    expose_headers=["*"],
-)
-
+# --- v3.6.0 BREACH ORCHESTRATOR ---
 async def app_orchestrator(scope, receive, send):
     if scope["type"] == "http":
         path = scope.get("path", "")
         
-        # 1. Health check bypass
+        # 1. Immediate Health Check Bypass
         if path == "/health":
             response = JSONResponse({"status": "online"})
             await response(scope, receive, send)
             return
 
-        # 2. Permissive Host Handling
-        # Instead of forcing a host, we let the incoming host pass, 
-        # but we ENSURE it doesn't trigger internal Starlette 421s.
-        # We also strip Connection/TE to prevent HTTP/2 coalescing issues.
+        # 2. Host Sanitization & Proxy Coalescing Fix
+        # We strip Connection/TE to prevent HTTP/2 issues and keep Host flexible.
         headers = scope.get("headers", [])
         new_headers = []
         for name, value in headers:
@@ -117,7 +99,7 @@ async def app_orchestrator(scope, receive, send):
             new_headers.append((name, value))
         scope["headers"] = new_headers
 
-    # 3. Response Patching for SSE buffering bypass
+    # 3. Response Patching: SSE Buffering Bypass (X-Accel-Buffering)
     async def send_wrapper(message):
         if message["type"] == "http.response.start":
             headers = message.get("headers", [])
@@ -126,15 +108,15 @@ async def app_orchestrator(scope, receive, send):
             message["headers"] = headers
         await send(message)
 
-    await main_app(scope, receive, send_wrapper)
+    await mcp_asgi_app(scope, receive, send_wrapper)
 
+# Export as 'app' for Render
 app = app_orchestrator
 
 if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 10000))
-    # We remove 'proxy_headers=True' to see if uvicorn's internal trust logic is tripping.
-    # We stick to h11 (HTTP/1.1) for SSE stability.
+    # Enforce HTTP/1.1 (h11) for proxy stability
     uvicorn.run(
         app, 
         host="0.0.0.0", 
