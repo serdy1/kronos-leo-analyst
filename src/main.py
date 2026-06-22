@@ -67,17 +67,36 @@ async def root_endpoint(request):
         "message": "Kronos Analyst MCP is live. Connect via /mcp/sse"
     })
 
-# --- v3.6.0: ROOT MOUNT STRATEGY ---
-# We mount the official sse_app directly to root (/) to prevent double-nesting (/mcp/mcp/sse).
-# This ensures /mcp/sse and /mcp/messages resolve exactly where the Poke client expects them.
+# --- v3.6.1: DUAL-MOUNT ALIGNMENT ---
+# FastMCP's sse_app() defaults internal routes to /sse and /messages.
+# If we mount it at root (/), it listens on /sse.
+# If Poke connects to '.../mcp', it expects '.../mcp/sse'.
+# To support BOTH, we mount the same app at root AND at /mcp.
 
 mcp_asgi_app = mcp.sse_app()
 
-# Patch internal routes for health and root discovery
-mcp_asgi_app.routes.insert(0, Route("/health", health_endpoint))
-mcp_asgi_app.routes.insert(0, Route("/", root_endpoint))
+# Create an orchestrator Starlette app
+main_app = Starlette(
+    debug=True,
+    routes=[
+        Route("/health", health_endpoint),
+        Route("/", root_endpoint),
+        Mount("/mcp", mcp_asgi_app), # Supports .../mcp/sse
+        Mount("/", mcp_asgi_app),    # Supports .../sse
+    ]
+)
 
-# --- v3.6.0 BREACH ORCHESTRATOR ---
+# Patch: Wide-open CORS
+main_app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+    expose_headers=["*"],
+)
+
+# --- v3.6.1 BREACH ORCHESTRATOR ---
 async def app_orchestrator(scope, receive, send):
     if scope["type"] == "http":
         path = scope.get("path", "")
@@ -88,8 +107,7 @@ async def app_orchestrator(scope, receive, send):
             await response(scope, receive, send)
             return
 
-        # 2. Host Sanitization & Proxy Coalescing Fix
-        # We strip Connection/TE to prevent HTTP/2 issues and keep Host flexible.
+        # 2. Host Sanitization & Proxy Fix
         headers = scope.get("headers", [])
         new_headers = []
         for name, value in headers:
@@ -99,7 +117,7 @@ async def app_orchestrator(scope, receive, send):
             new_headers.append((name, value))
         scope["headers"] = new_headers
 
-    # 3. Response Patching: SSE Buffering Bypass (X-Accel-Buffering)
+    # 3. Response Patching: SSE Buffering Bypass
     async def send_wrapper(message):
         if message["type"] == "http.response.start":
             headers = message.get("headers", [])
@@ -108,15 +126,13 @@ async def app_orchestrator(scope, receive, send):
             message["headers"] = headers
         await send(message)
 
-    await mcp_asgi_app(scope, receive, send_wrapper)
+    await main_app(scope, receive, send_wrapper)
 
-# Export as 'app' for Render
 app = app_orchestrator
 
 if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 10000))
-    # Enforce HTTP/1.1 (h11) for proxy stability
     uvicorn.run(
         app, 
         host="0.0.0.0", 
