@@ -83,60 +83,66 @@ mcp_asgi_app.add_middleware(
     expose_headers=["*"],
 )
 
-# --- THE v3.5.6 LOGGING & SANITIZATION ---
-# We wrap the app in an orchestrator to diagnose 421 errors and sanitize headers.
+# --- BREACH PLAN v3.5.7: Proxy-Friendly Header & Buffer Patch ---
 async def app_orchestrator(scope, receive, send):
-    if scope["type"] in ("http", "websocket"):
+    if scope["type"] == "http":
         path = scope.get("path", "")
         
-        # 1. Immediate Health Check Bypass
+        # 1. Instant Health Check Bypass
         if path == "/health":
             response = JSONResponse({"status": "online"})
             await response(scope, receive, send)
             return
 
-        # 2. Extract and Log Incoming Host (Debug only)
-        original_host = "Unknown"
-        headers = scope.get("headers", [])
-        for name, value in headers:
-            if name.lower() == b"host":
-                original_host = value.decode(errors="ignore")
-                break
-        
-        # 3. Aggressive Sanitization for SSE
-        # We replace the host header to match Render's expectations.
-        # We also ensure 'server' field in scope is set if possible.
+        # 2. Host Sanitization & Header Cleanup
+        # We strip potentially problematic headers that trigger Cloudflare/Render 421s.
+        new_headers = []
         render_host_str = os.environ.get("RENDER_EXTERNAL_HOSTNAME", "kronos-leo-analyst.onrender.com")
         render_host_bytes = render_host_str.encode()
         
-        new_headers = []
-        for name, value in headers:
-            if name.lower() == b"host":
+        for name, value in scope.get("headers", []):
+            name_lower = name.lower()
+            # Replace host header
+            if name_lower == b"host":
                 new_headers.append((b"host", render_host_bytes))
+            # Remove connection/te headers that might confuse proxy coalescing
+            elif name_lower in (b"connection", b"te"):
+                continue
             else:
                 new_headers.append((name, value))
         
         scope["headers"] = new_headers
         
-        # Force the scope 'server' to match the host to prevent internal 421s
-        # Many ASGI apps check scope['server'] against the Host header.
+        # Patch scope server to match external identity
         if "server" in scope and scope["server"]:
-             # scope['server'] is (host, port)
              scope["server"] = (render_host_str, scope["server"][1])
 
-    await mcp_asgi_app(scope, receive, send)
+    # 3. Response Patching: Bypass Proxy Buffering
+    # We wrap the 'send' callable to inject X-Accel-Buffering for SSE.
+    async def send_wrapper(message):
+        if message["type"] == "http.response.start":
+            headers = message.get("headers", [])
+            # Inject Nginx/Proxy bypass header for SSE
+            headers.append((b"x-accel-buffering", b"no"))
+            # Ensure Cache-Control is strictly no-cache
+            headers.append((b"cache-control", b"no-cache, no-transform"))
+            message["headers"] = headers
+        await send(message)
+
+    await mcp_asgi_app(scope, receive, send_wrapper)
 
 app = app_orchestrator
 
 if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 10000))
-    # We use log_level debug to see exactly how uvicorn handles the headers.
+    # Run with HTTP/1.1 to maximize proxy compatibility for SSE
     uvicorn.run(
         app, 
         host="0.0.0.0", 
         port=port, 
         proxy_headers=True, 
         forwarded_allow_ips="*",
+        http="h11",
         log_level="debug"
     )
