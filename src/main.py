@@ -67,25 +67,25 @@ async def root_endpoint(request):
         "message": "Kronos Analyst MCP is live. Connect via /mcp/sse"
     })
 
-# --- v3.7.1: THE AGGRESSIVE HOST OVERWRITE ---
-# Stripping Host was not enough because the underlying ASGI server (uvicorn/starlette) 
-# might still be validating against the 'server' field or a default.
-# We will explicitly overwrite Host with the EXACT expected public domain.
+# --- v3.7.2: THE ABSOLUTE HOST BYPASS ---
+# We strip the Host header early and set a custom server value in the scope
+# to prevent any 421 errors from Starlette/Uvicorn or FastMCP internals.
 
 mcp_asgi_app = mcp.sse_app()
 
-async def host_fixer_middleware(scope, receive, send):
+async def mcp_handler(scope, receive, send):
     if scope["type"] == "http":
-        render_host = os.environ.get("RENDER_EXTERNAL_HOSTNAME", "kronos-leo-analyst.onrender.com").encode()
+        # Force rewrite the scope entirely to bypass 421
         headers = scope.get("headers", [])
-        # Overwrite Host header to the external domain
-        new_headers = [(n, v) for n, v in headers if n.lower() != b"host"]
+        # Strip ALL host-related headers that could trigger a 421 mismatch
+        new_headers = [(n, v) for n, v in headers if n.lower() not in (b"host", b"x-forwarded-host")]
+        # Add the external host explicitly
+        render_host = os.environ.get("RENDER_EXTERNAL_HOSTNAME", "kronos-leo-analyst.onrender.com").encode()
         new_headers.append((b"host", render_host))
         scope["headers"] = new_headers
-        # Also patch the server field to match
-        if "server" in scope and scope["server"]:
-             scope["server"] = (render_host.decode(), scope["server"][1])
-             
+        # Nullify server to prevent internal validation
+        scope["server"] = None
+
     await mcp_asgi_app(scope, receive, send)
 
 main_app = Starlette(
@@ -93,7 +93,7 @@ main_app = Starlette(
     routes=[
         Route("/health", health_endpoint),
         Route("/", root_endpoint),
-        Mount("/mcp", host_fixer_middleware),
+        Mount("/mcp", mcp_handler),
     ]
 )
 
@@ -130,13 +130,11 @@ app = app_orchestrator
 if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 10000))
-    # We re-enable proxy_headers to help uvicorn understand the forwarded environment
+    # Disable proxy_headers and host validation in uvicorn
     uvicorn.run(
         app, 
         host="0.0.0.0", 
         port=port, 
         http="h11",
-        proxy_headers=True,
-        forwarded_allow_ips="*",
         log_level="debug"
     )
