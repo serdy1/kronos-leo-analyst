@@ -10,7 +10,7 @@ if BASE_DIR not in sys.path:
 
 from mcp.server.fastmcp import FastMCP
 from dotenv import load_dotenv
-from starlette.responses import JSONResponse, Response
+from starlette.responses import JSONResponse
 from starlette.routing import Route, Mount
 from starlette.middleware.cors import CORSMiddleware
 from starlette.applications import Starlette
@@ -67,20 +67,25 @@ async def root_endpoint(request):
         "message": "Kronos Analyst MCP is live. Connect via /mcp/sse"
     })
 
-# --- v3.7.0: THE NUCLEAR HOST BYPASS ---
-# FastMCP's internal logic is rejecting the Host header with a 421.
-# We will completely strip the Host header from the scope before it reaches FastMCP.
-# This forces FastMCP to either use a default or ignore host validation.
+# --- v3.7.1: THE AGGRESSIVE HOST OVERWRITE ---
+# Stripping Host was not enough because the underlying ASGI server (uvicorn/starlette) 
+# might still be validating against the 'server' field or a default.
+# We will explicitly overwrite Host with the EXACT expected public domain.
 
 mcp_asgi_app = mcp.sse_app()
 
-# Simple wrapper to strip Host header
-async def host_stripper_middleware(scope, receive, send):
+async def host_fixer_middleware(scope, receive, send):
     if scope["type"] == "http":
+        render_host = os.environ.get("RENDER_EXTERNAL_HOSTNAME", "kronos-leo-analyst.onrender.com").encode()
         headers = scope.get("headers", [])
-        # Remove Host header entirely to bypass validation
+        # Overwrite Host header to the external domain
         new_headers = [(n, v) for n, v in headers if n.lower() != b"host"]
+        new_headers.append((b"host", render_host))
         scope["headers"] = new_headers
+        # Also patch the server field to match
+        if "server" in scope and scope["server"]:
+             scope["server"] = (render_host.decode(), scope["server"][1])
+             
     await mcp_asgi_app(scope, receive, send)
 
 main_app = Starlette(
@@ -88,7 +93,7 @@ main_app = Starlette(
     routes=[
         Route("/health", health_endpoint),
         Route("/", root_endpoint),
-        Mount("/mcp", host_stripper_middleware),
+        Mount("/mcp", host_fixer_middleware),
     ]
 )
 
@@ -106,7 +111,6 @@ async def app_orchestrator(scope, receive, send):
     if scope["type"] == "http":
         path = scope.get("path", "")
         if path == "/health":
-            await health_endpoint(None)
             response = JSONResponse({"status": "online"})
             await response(scope, receive, send)
             return
@@ -126,10 +130,13 @@ app = app_orchestrator
 if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 10000))
+    # We re-enable proxy_headers to help uvicorn understand the forwarded environment
     uvicorn.run(
         app, 
         host="0.0.0.0", 
         port=port, 
         http="h11",
+        proxy_headers=True,
+        forwarded_allow_ips="*",
         log_level="debug"
     )
