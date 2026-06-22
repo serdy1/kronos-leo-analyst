@@ -67,14 +67,14 @@ async def root_endpoint(request):
         "message": "Kronos Analyst MCP is live. Connect via /mcp/sse"
     })
 
-# --- v3.5.8: ALIGNMENT STRATEGY ---
-# We use the official sse_app() but mount it specifically under /mcp 
-# to match the successful bist-mcp-server pattern and standard expectations.
+# --- v3.5.9: THE WILD-CARD HOST STRATEGY ---
+# If Render/Cloudflare gives 421, it's because it dislikes the Host header mismatch.
+# We will STOP explicitly overwriting the Host header with a fixed string, 
+# and instead pass through whatever host Render's proxy is providing internally, 
+# OR use a more permissive matching.
 
 mcp_app = mcp.sse_app()
 
-# Create a clean Starlette app to orchestrate the routes
-# This allows us to handle health checks at the root and mount MCP at /mcp
 main_app = Starlette(
     debug=True,
     routes=[
@@ -84,7 +84,7 @@ main_app = Starlette(
     ]
 )
 
-# Patch: Wide-open CORS
+# Wide-open CORS - vital for cross-origin SSE
 main_app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -94,37 +94,30 @@ main_app.add_middleware(
     expose_headers=["*"],
 )
 
-# --- v3.5.8 BREACH ORCHESTRATOR ---
 async def app_orchestrator(scope, receive, send):
     if scope["type"] == "http":
         path = scope.get("path", "")
         
-        # Immediate Health Check Bypass
+        # 1. Health check bypass
         if path == "/health":
             response = JSONResponse({"status": "online"})
             await response(scope, receive, send)
             return
 
-        # Host Sanitization for all MCP routes
+        # 2. Permissive Host Handling
+        # Instead of forcing a host, we let the incoming host pass, 
+        # but we ENSURE it doesn't trigger internal Starlette 421s.
+        # We also strip Connection/TE to prevent HTTP/2 coalescing issues.
+        headers = scope.get("headers", [])
         new_headers = []
-        render_host_str = os.environ.get("RENDER_EXTERNAL_HOSTNAME", "kronos-leo-analyst.onrender.com")
-        render_host_bytes = render_host_str.encode()
-        
-        for name, value in scope.get("headers", []):
+        for name, value in headers:
             name_lower = name.lower()
-            if name_lower == b"host":
-                new_headers.append((b"host", render_host_bytes))
-            elif name_lower in (b"connection", b"te"):
+            if name_lower in (b"connection", b"te"):
                 continue
-            else:
-                new_headers.append((name, value))
-        
+            new_headers.append((name, value))
         scope["headers"] = new_headers
-        
-        if "server" in scope and scope["server"]:
-             scope["server"] = (render_host_str, scope["server"][1])
 
-    # Response Patching for SSE buffering bypass
+    # 3. Response Patching for SSE buffering bypass
     async def send_wrapper(message):
         if message["type"] == "http.response.start":
             headers = message.get("headers", [])
@@ -135,19 +128,17 @@ async def app_orchestrator(scope, receive, send):
 
     await main_app(scope, receive, send_wrapper)
 
-# Export as 'app' for Render
 app = app_orchestrator
 
 if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 10000))
-    # Enforce HTTP/1.1 for maximum proxy transparency
+    # We remove 'proxy_headers=True' to see if uvicorn's internal trust logic is tripping.
+    # We stick to h11 (HTTP/1.1) for SSE stability.
     uvicorn.run(
         app, 
         host="0.0.0.0", 
         port=port, 
-        proxy_headers=True, 
-        forwarded_allow_ips="*",
         http="h11",
         log_level="debug"
     )
