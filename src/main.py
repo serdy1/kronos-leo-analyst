@@ -86,11 +86,11 @@ mcp_asgi_app.add_middleware(
 # --- THE v3.5.5 STRATEGY ---
 # 1. Bypass sanitization for /health to ensure Render boot success.
 # 2. Lazy loading of heavy engine (already in get_engine()) keeps memory low.
-# 3. Static port binding at 10000.
+# 3. Explicitly export 'app' for Render/Uvicorn.
 async def app_orchestrator(scope, receive, send):
     if scope["type"] == "http":
         path = scope.get("path", "")
-        # Priority 1: Instant /health bypass
+        # Priority 1: Instant /health bypass for Render bot
         if path == "/health":
             response = JSONResponse({"status": "online"})
             await response(scope, receive, send)
@@ -100,6 +100,7 @@ async def app_orchestrator(scope, receive, send):
         new_headers = []
         for name, value in scope.get("headers", []):
             if name.lower() == b"host":
+                # Use the external hostname provided by Render or the default public URL
                 render_host = os.environ.get("RENDER_EXTERNAL_HOSTNAME", "kronos-leo-analyst.onrender.com").encode()
                 new_headers.append((b"host", render_host))
             else:
@@ -108,7 +109,7 @@ async def app_orchestrator(scope, receive, send):
     
     await mcp_asgi_app(scope, receive, send)
 
-# Main entry point for Render
+# Final explicit export for Render's entrypoint
 app = app_orchestrator
 
 if __name__ == "__main__":
