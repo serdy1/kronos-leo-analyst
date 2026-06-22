@@ -15,7 +15,7 @@ from starlette.routing import Route
 from starlette.middleware.cors import CORSMiddleware
 
 # Configure logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger("kronos-mcp")
 
 # Load environment variables
@@ -83,43 +83,60 @@ mcp_asgi_app.add_middleware(
     expose_headers=["*"],
 )
 
-# --- THE v3.5.5 STRATEGY ---
-# 1. Bypass sanitization for /health to ensure Render boot success.
-# 2. Lazy loading of heavy engine (already in get_engine()) keeps memory low.
-# 3. Explicitly export 'app' for Render/Uvicorn.
+# --- THE v3.5.6 LOGGING & SANITIZATION ---
+# We wrap the app in an orchestrator to diagnose 421 errors and sanitize headers.
 async def app_orchestrator(scope, receive, send):
-    if scope["type"] == "http":
+    if scope["type"] in ("http", "websocket"):
         path = scope.get("path", "")
-        # Priority 1: Instant /health bypass for Render bot
+        
+        # 1. Immediate Health Check Bypass
         if path == "/health":
             response = JSONResponse({"status": "online"})
             await response(scope, receive, send)
             return
 
-        # Priority 2: Host Sanitization for /sse and others
-        new_headers = []
-        for name, value in scope.get("headers", []):
+        # 2. Extract and Log Incoming Host (Debug only)
+        original_host = "Unknown"
+        headers = scope.get("headers", [])
+        for name, value in headers:
             if name.lower() == b"host":
-                # Use the external hostname provided by Render or the default public URL
-                render_host = os.environ.get("RENDER_EXTERNAL_HOSTNAME", "kronos-leo-analyst.onrender.com").encode()
-                new_headers.append((b"host", render_host))
+                original_host = value.decode(errors="ignore")
+                break
+        
+        # 3. Aggressive Sanitization for SSE
+        # We replace the host header to match Render's expectations.
+        # We also ensure 'server' field in scope is set if possible.
+        render_host_str = os.environ.get("RENDER_EXTERNAL_HOSTNAME", "kronos-leo-analyst.onrender.com")
+        render_host_bytes = render_host_str.encode()
+        
+        new_headers = []
+        for name, value in headers:
+            if name.lower() == b"host":
+                new_headers.append((b"host", render_host_bytes))
             else:
                 new_headers.append((name, value))
+        
         scope["headers"] = new_headers
-    
+        
+        # Force the scope 'server' to match the host to prevent internal 421s
+        # Many ASGI apps check scope['server'] against the Host header.
+        if "server" in scope and scope["server"]:
+             # scope['server'] is (host, port)
+             scope["server"] = (render_host_str, scope["server"][1])
+
     await mcp_asgi_app(scope, receive, send)
 
-# Final explicit export for Render's entrypoint
 app = app_orchestrator
 
 if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 10000))
-    logger.info(f"Starting uvicorn on 0.0.0.0:{port}")
+    # We use log_level debug to see exactly how uvicorn handles the headers.
     uvicorn.run(
         app, 
         host="0.0.0.0", 
         port=port, 
         proxy_headers=True, 
-        forwarded_allow_ips="*"
+        forwarded_allow_ips="*",
+        log_level="debug"
     )
