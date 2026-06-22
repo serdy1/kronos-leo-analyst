@@ -67,11 +67,9 @@ async def root_endpoint(request):
     })
 
 # --- ASGI APP SETUP ---
-# Direct interception of the Host header to bypass internal MCP/Starlette validation.
-
 mcp_asgi_app = mcp.sse_app()
 
-# Patch: Inject discovery routes
+# Patch: Inject discovery routes directly into internal router
 mcp_asgi_app.routes.insert(0, Route("/health", health_endpoint))
 mcp_asgi_app.routes.insert(0, Route("/", root_endpoint))
 
@@ -85,11 +83,20 @@ mcp_asgi_app.add_middleware(
     expose_headers=["*"],
 )
 
-# --- THE HOST PATCH ---
-# We wrap the app in a raw ASGI middleware that sanitizes the Host header 
-# BEFORE it reaches FastMCP's internal logic.
-async def host_sanitizer_middleware(scope, receive, send):
-    if scope["type"] in ("http", "websocket"):
+# --- THE v3.5.5 STRATEGY ---
+# 1. Bypass sanitization for /health to ensure Render boot success.
+# 2. Lazy loading of heavy engine (already in get_engine()) keeps memory low.
+# 3. Static port binding at 10000.
+async def app_orchestrator(scope, receive, send):
+    if scope["type"] == "http":
+        path = scope.get("path", "")
+        # Priority 1: Instant /health bypass
+        if path == "/health":
+            response = JSONResponse({"status": "online"})
+            await response(scope, receive, send)
+            return
+
+        # Priority 2: Host Sanitization for /sse and others
         new_headers = []
         for name, value in scope.get("headers", []):
             if name.lower() == b"host":
@@ -101,11 +108,9 @@ async def host_sanitizer_middleware(scope, receive, send):
     
     await mcp_asgi_app(scope, receive, send)
 
-# IMPORTANT: Render/Gunicorn expects 'app' at the module level.
-# We assign our patched middleware to the 'app' variable.
-app = host_sanitizer_middleware
+# Main entry point for Render
+app = app_orchestrator
 
-# Render entry point
 if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 10000))
