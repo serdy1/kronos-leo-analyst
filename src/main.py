@@ -11,8 +11,9 @@ if BASE_DIR not in sys.path:
 from mcp.server.fastmcp import FastMCP
 from dotenv import load_dotenv
 from starlette.responses import JSONResponse
-from starlette.routing import Route
+from starlette.routing import Route, Mount
 from starlette.middleware.cors import CORSMiddleware
+from starlette.applications import Starlette
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG)
@@ -62,19 +63,29 @@ async def health_endpoint(request):
 async def root_endpoint(request):
     return JSONResponse({
         "status": "online",
-        "mcp_sse_path": "/sse",
-        "message": "Kronos Analyst MCP is live. Connect via /sse"
+        "mcp_sse_path": "/mcp/sse",
+        "message": "Kronos Analyst MCP is live. Connect via /mcp/sse"
     })
 
-# --- ASGI APP SETUP ---
-mcp_asgi_app = mcp.sse_app()
+# --- v3.5.8: ALIGNMENT STRATEGY ---
+# We use the official sse_app() but mount it specifically under /mcp 
+# to match the successful bist-mcp-server pattern and standard expectations.
 
-# Patch: Inject discovery routes directly into internal router
-mcp_asgi_app.routes.insert(0, Route("/health", health_endpoint))
-mcp_asgi_app.routes.insert(0, Route("/", root_endpoint))
+mcp_app = mcp.sse_app()
+
+# Create a clean Starlette app to orchestrate the routes
+# This allows us to handle health checks at the root and mount MCP at /mcp
+main_app = Starlette(
+    debug=True,
+    routes=[
+        Route("/health", health_endpoint),
+        Route("/", root_endpoint),
+        Mount("/mcp", mcp_app),
+    ]
+)
 
 # Patch: Wide-open CORS
-mcp_asgi_app.add_middleware(
+main_app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_credentials=True,
@@ -83,29 +94,26 @@ mcp_asgi_app.add_middleware(
     expose_headers=["*"],
 )
 
-# --- BREACH PLAN v3.5.7: Proxy-Friendly Header & Buffer Patch ---
+# --- v3.5.8 BREACH ORCHESTRATOR ---
 async def app_orchestrator(scope, receive, send):
     if scope["type"] == "http":
         path = scope.get("path", "")
         
-        # 1. Instant Health Check Bypass
+        # Immediate Health Check Bypass
         if path == "/health":
             response = JSONResponse({"status": "online"})
             await response(scope, receive, send)
             return
 
-        # 2. Host Sanitization & Header Cleanup
-        # We strip potentially problematic headers that trigger Cloudflare/Render 421s.
+        # Host Sanitization for all MCP routes
         new_headers = []
         render_host_str = os.environ.get("RENDER_EXTERNAL_HOSTNAME", "kronos-leo-analyst.onrender.com")
         render_host_bytes = render_host_str.encode()
         
         for name, value in scope.get("headers", []):
             name_lower = name.lower()
-            # Replace host header
             if name_lower == b"host":
                 new_headers.append((b"host", render_host_bytes))
-            # Remove connection/te headers that might confuse proxy coalescing
             elif name_lower in (b"connection", b"te"):
                 continue
             else:
@@ -113,30 +121,27 @@ async def app_orchestrator(scope, receive, send):
         
         scope["headers"] = new_headers
         
-        # Patch scope server to match external identity
         if "server" in scope and scope["server"]:
              scope["server"] = (render_host_str, scope["server"][1])
 
-    # 3. Response Patching: Bypass Proxy Buffering
-    # We wrap the 'send' callable to inject X-Accel-Buffering for SSE.
+    # Response Patching for SSE buffering bypass
     async def send_wrapper(message):
         if message["type"] == "http.response.start":
             headers = message.get("headers", [])
-            # Inject Nginx/Proxy bypass header for SSE
             headers.append((b"x-accel-buffering", b"no"))
-            # Ensure Cache-Control is strictly no-cache
             headers.append((b"cache-control", b"no-cache, no-transform"))
             message["headers"] = headers
         await send(message)
 
-    await mcp_asgi_app(scope, receive, send_wrapper)
+    await main_app(scope, receive, send_wrapper)
 
+# Export as 'app' for Render
 app = app_orchestrator
 
 if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 10000))
-    # Run with HTTP/1.1 to maximize proxy compatibility for SSE
+    # Enforce HTTP/1.1 for maximum proxy transparency
     uvicorn.run(
         app, 
         host="0.0.0.0", 
