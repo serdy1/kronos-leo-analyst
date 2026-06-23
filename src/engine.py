@@ -102,6 +102,168 @@ class KronosLeoEngine:
         except Exception as e:
             return {"error": str(e)}
 
+    def _fetch_rich_fundamentals(self, ticker: str) -> dict:
+        try:
+            t = yf.Ticker(ticker)
+            info = t.info or {}
+        except Exception:
+            info = {}
+
+        eps = info.get("trailingEps")
+        pe_ratio = info.get("trailingPE")
+        market_cap = info.get("marketCap")
+        dividend_yield = info.get("dividendYield") or 0.0
+        
+        debt_to_equity = info.get("debtToEquity")
+        if debt_to_equity is not None:
+            if debt_to_equity > 5.0:
+                debt_to_equity = debt_to_equity / 100.0
+        
+        current_ratio = info.get("currentRatio")
+        book_value_per_share = info.get("bookValue")
+        
+        roe = info.get("returnOnEquity")
+        if roe is not None:
+            roe = roe * 100.0 if abs(roe) < 1.0 else roe
+            
+        operating_margin = info.get("operatingMargins")
+        if operating_margin is not None:
+            operating_margin = operating_margin * 100.0 if abs(operating_margin) < 1.0 else operating_margin
+
+        earnings_growth_rate = info.get("earningsGrowth")
+        if earnings_growth_rate is not None:
+            earnings_growth_rate = earnings_growth_rate * 100.0 if abs(earnings_growth_rate) < 1.0 else earnings_growth_rate
+        else:
+            earnings_growth_rate = 10.0
+            
+        free_cash_flow = info.get("freeCashflow")
+        net_income = info.get("netIncomeToCommon") or info.get("netIncome")
+
+        total_assets = None
+        total_liabilities = None
+        depreciation = None
+
+        def get_df_value(df, keys, col_idx=0):
+            if df is None or df.empty:
+                return None
+            for key in keys:
+                for idx in df.index:
+                    if key.lower() == str(idx).strip().lower() or key.lower() in str(idx).strip().lower():
+                        val = df.loc[idx]
+                        if isinstance(val, pd.Series):
+                            return float(val.iloc[col_idx]) if col_idx < len(val) and not pd.isna(val.iloc[col_idx]) else None
+                        return float(val) if not pd.isna(val) else None
+            return None
+
+        try:
+            bs = t.balance_sheet
+            total_assets = get_df_value(bs, ["Total Assets", "totalAssets"])
+            total_liabilities = get_df_value(bs, ["Total Liabilities Net Minority Interest", "Total Liabilities", "totalLiabilities"])
+            if not book_value_per_share:
+                equity = get_df_value(bs, ["Common Stock Equity", "Stockholders Equity", "totalStockholdersEquity"])
+                shares = info.get("sharesOutstanding")
+                if equity and shares:
+                    book_value_per_share = equity / shares
+        except Exception as e:
+            print(f"[ENGINE] Failed to fetch balance sheet for {ticker}: {e}")
+
+        try:
+            cf = t.cashflow
+            depreciation = get_df_value(cf, ["Depreciation And Amortization", "Depreciation & Amortization", "Depreciation", "depreciationAndAmortization"])
+            if not free_cash_flow:
+                free_cash_flow = get_df_value(cf, ["Free Cash Flow", "freeCashFlow"])
+        except Exception as e:
+            print(f"[ENGINE] Failed to fetch cashflow for {ticker}: {e}")
+
+        try:
+            fin = t.financials
+            if not net_income:
+                net_income = get_df_value(fin, ["Net Income", "netIncome"])
+        except Exception as e:
+            print(f"[ENGINE] Failed to fetch financials for {ticker}: {e}")
+
+        if total_assets is None:
+            total_assets = 0.0
+        if total_liabilities is None:
+            total_liabilities = 0.0
+        if book_value_per_share is None:
+            book_value_per_share = 0.0
+        if debt_to_equity is None:
+            if total_liabilities and total_assets and (total_assets - total_liabilities) > 0:
+                debt_to_equity = total_liabilities / (total_assets - total_liabilities)
+            else:
+                debt_to_equity = 0.5
+        if current_ratio is None:
+            current_ratio = 1.5
+        if roe is None:
+            roe = 10.0
+        if operating_margin is None:
+            operating_margin = 10.0
+        if free_cash_flow is None:
+            free_cash_flow = 0.0
+        if net_income is None:
+            net_income = 0.0
+        if depreciation is None:
+            depreciation = 0.0
+
+        inventory_growth_pct = 0.0
+        sales_growth_pct = 0.0
+        try:
+            bs = t.balance_sheet
+            if bs is not None and len(bs.columns) >= 2:
+                inv_val_cur = get_df_value(bs, ["Inventory", "inventories"], col_idx=0)
+                inv_val_prev = get_df_value(bs, ["Inventory", "inventories"], col_idx=1)
+                if inv_val_cur is not None and inv_val_prev and inv_val_prev > 0:
+                    inventory_growth_pct = ((inv_val_cur - inv_val_prev) / inv_val_prev) * 100.0
+            
+            fin = t.financials
+            if fin is not None and len(fin.columns) >= 2:
+                rev_val_cur = get_df_value(fin, ["Total Revenue", "totalRevenue"], col_idx=0)
+                rev_val_prev = get_df_value(fin, ["Total Revenue", "totalRevenue"], col_idx=1)
+                if rev_val_cur is not None and rev_val_prev and rev_val_prev > 0:
+                    sales_growth_pct = ((rev_val_cur - rev_val_prev) / rev_val_prev) * 100.0
+        except Exception:
+            pass
+
+        # Try multiple price sources
+        current_price = (
+            info.get("currentPrice")
+            or info.get("regularMarketPrice")
+            or info.get("previousClose")
+            or info.get("navPrice")
+            or 0.0
+        )
+        # If still 0, try fast download for last close
+        if not current_price:
+            try:
+                hist = t.history(period="5d")
+                if hist is not None and not hist.empty:
+                    current_price = float(hist["Close"].iloc[-1])
+            except Exception:
+                pass
+
+        return {
+            "current_price": current_price,
+            "eps": eps,
+            "pe_ratio": pe_ratio,
+            "debt_to_equity": debt_to_equity,
+            "current_ratio": current_ratio,
+            "book_value_per_share": book_value_per_share,
+            "earnings_growth_rate": earnings_growth_rate,
+            "roe": roe,
+            "operating_margin": operating_margin,
+            "dividend_yield": dividend_yield * 100.0 if dividend_yield else 0.0,
+            "market_cap": market_cap,
+            "net_income": net_income,
+            "depreciation": depreciation,
+            "free_cash_flow": free_cash_flow,
+            "total_assets": total_assets,
+            "total_liabilities": total_liabilities,
+            "inventory_growth_pct": inventory_growth_pct,
+            "sales_growth_pct": sales_growth_pct,
+        }
+
+
     def _generate_agent_signals(self, ticker: str, forecast_df: pd.DataFrame, fundamentals: dict):
         forecast_return = (float(forecast_df["close"].iloc[-1]) / float(forecast_df["close"].iloc[0]) - 1) if forecast_df is not None else 0
         pe = fundamentals.get("pe_ratio") or 20

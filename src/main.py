@@ -166,6 +166,38 @@ async def messages_endpoint(request: Request):
                             "properties": {},
                         },
                     },
+                    {
+                        "name": "list_investors",
+                        "description": "List all three available investor agents (Benjamin Graham, Peter Lynch, Warren Buffett) and their strategies",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {},
+                        },
+                    },
+                    {
+                        "name": "ask_investor",
+                        "description": "Ask a specific investor agent a question about their strategies, rules, checklists, or formulas",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "investor": {"type": "string", "description": "Name of the investor (graham, lynch, buffett)"},
+                                "question": {"type": "string", "description": "The question to ask, or keywords like 'checklist', 'formulas', 'strategy'"}
+                            },
+                            "required": ["investor", "question"],
+                        },
+                    },
+                    {
+                        "name": "analyze_investor",
+                        "description": "Run a deep fundamental stock analysis by a specific investor agent (Graham, Lynch, Buffett) using yfinance",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "investor": {"type": "string", "description": "Name of the investor (graham, lynch, buffett)"},
+                                "ticker": {"type": "string", "description": "Stock ticker symbol (e.g. AAPL, MSFT)"}
+                            },
+                            "required": ["investor", "ticker"],
+                        },
+                    },
                 ],
             },
         }
@@ -197,6 +229,22 @@ async def messages_endpoint(request: Request):
                     if forecast is None:
                         forecast = eng._simulate_forecast(df, arguments.get("forecast_horizon", 30))
                     result = {"forecast": forecast.to_dict()}
+            elif tool_name == "list_investors":
+                from src.investor_agents import InvestorAgentFactory
+                result = {"investors": InvestorAgentFactory.list_agents()}
+            elif tool_name == "ask_investor":
+                from src.investor_agents import InvestorAgentFactory
+                investor = arguments.get("investor", "")
+                question = arguments.get("question", "")
+                agent = InvestorAgentFactory.get_agent(investor)
+                result = {"investor": investor, "question": question, "answer": agent.ask(question)}
+            elif tool_name == "analyze_investor":
+                from src.investor_agents import InvestorAgentFactory
+                investor = arguments.get("investor", "")
+                ticker = arguments.get("ticker", "")
+                fundamentals = eng._fetch_rich_fundamentals(ticker)
+                agent = InvestorAgentFactory.get_agent(investor)
+                result = agent.analyze_stock(ticker, fundamentals)
             else:
                 return JSONResponse(
                     status_code=400,
@@ -242,6 +290,49 @@ def list_agents():
         return {"agents": get_agents_list()}
     except Exception as e:
         return {"agents": [], "error": str(e)}
+
+
+@app.get("/investors")
+def list_investor_agents():
+    from src.investor_agents import InvestorAgentFactory
+    return {"investors": InvestorAgentFactory.list_agents()}
+
+
+@app.post("/investor/{investor_name}/ask")
+async def ask_investor(investor_name: str, request: Request):
+    from src.investor_agents import InvestorAgentFactory
+    try:
+        body = await request.json()
+        question = body.get("question", "")
+        agent = InvestorAgentFactory.get_agent(investor_name)
+        return {"investor": investor_name, "question": question, "answer": agent.ask(question)}
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/investor/{investor_name}/analyze")
+async def analyze_by_investor(investor_name: str, req: AnalysisRequest):
+    from src.investor_agents import InvestorAgentFactory
+    from .engine import KronosLeoEngine
+    eng = KronosLeoEngine()
+    try:
+        fundamentals = eng._fetch_rich_fundamentals(req.ticker)
+        # Ensure we have current price
+        if not fundamentals.get("current_price"):
+            df = eng._fetch_data(req.ticker, req.days_back)
+            if df is not None and not df.empty:
+                fundamentals["current_price"] = float(df["close"].iloc[-1])
+            else:
+                raise HTTPException(status_code=400, detail=f"No data for {req.ticker}")
+        
+        agent = InvestorAgentFactory.get_agent(investor_name)
+        return agent.analyze_stock(req.ticker, fundamentals)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/models")
