@@ -6,18 +6,23 @@ import os
 import httpx
 import json
 
+try:
+    from investor_agents import INVESTOR_AGENTS
+    from rules import STRATEGIC_RULES
+except ImportError:
+    INVESTOR_AGENTS = {}
+    STRATEGIC_RULES = {}
+
 class LightweightHedgeFundEngine:
     def __init__(self):
         # Support both Gemini and OpenAI, prioritize Gemini for free tier
         self.gemini_key = os.getenv("GEMINI_API_KEY")
         self.openai_key = os.getenv("OPENAI_API_KEY")
         
-        # Google's OpenAI-compatible endpoint
         self.gemini_url = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
         self.openai_url = "https://api.openai.com/v1/chat/completions"
 
     async def _get_llm_completion(self, system_prompt: str, user_content: str):
-        # Pivot logic: use Gemini if available, fallback to OpenAI
         if self.gemini_key:
             url = self.gemini_url
             key = self.gemini_key
@@ -27,7 +32,7 @@ class LightweightHedgeFundEngine:
             key = self.openai_key
             model = "gpt-4o-mini"
         else:
-            return "Error: Neither GEMINI_API_KEY nor OPENAI_API_KEY is configured."
+            return "Error: No API key configured."
         
         async with httpx.AsyncClient() as client:
             try:
@@ -42,7 +47,7 @@ class LightweightHedgeFundEngine:
                         ],
                         "temperature": 0.7
                     },
-                    timeout=30.0
+                    timeout=45.0 # Increased timeout for slow upstream
                 )
                 data = response.json()
                 if "choices" in data:
@@ -55,14 +60,19 @@ class LightweightHedgeFundEngine:
         try:
             stock = yf.Ticker(ticker)
             info = stock.info
-            hist = stock.history(period="1y")
+            # v3.8.0 Low-RAM adjustment: Reduce history to 3 months
+            hist = stock.history(period="3mo")
             
-            # Basic technicals
+            if hist.empty:
+                 return {"error": "No price history found."}
+
             close_prices = hist["Close"]
             delta = close_prices.diff()
             gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
             loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-            rs = gain / loss
+            
+            # Avoid divide by zero
+            rs = gain / loss.replace(0, np.nan)
             rsi = 100 - (100 / (1 + rs))
 
             metrics = {
@@ -86,26 +96,15 @@ class LightweightHedgeFundEngine:
             return metrics
 
         context = f"Financial Context for {ticker}:\n{json.dumps(metrics, indent=2)}"
+        context += f"\n\nStrategic Rules to Consider:\n{json.dumps(STRATEGIC_RULES, indent=2)}"
 
-        # Serdar's Selected Agents
-        selected_agents = {
-            "Warren Buffett": "You are Warren Buffett. Focus on economic moats, long-term competitive advantage, and free cash flow. Is this a 'wonderful business'?",
-            "Michael Burry": "You are Michael Burry. Look for systemic risks, technical extremes, and contrarian value. Is there a bubble or a deep value reversal?",
-            "Technicals Agent": "Analyze the technical indicators (RSI, Volatility). Is the stock overbought, oversold, or trending?",
-            "Benjamin Graham": "You are Ben Graham. Seek a clear margin of safety. Focus on low price-to-book ratios and intrinsic value safety.",
-            "Peter Lynch": "You are Peter Lynch. Look for growth at a reasonable price (GARP) and understandable consumer businesses.",
-            "Philip Arthur Fisher": "You are Phil Fisher. Focus on management excellence, R&D strength, and long-term growth potential via 'scuttlebutt'.",
-            "Fundamentals Agent": "Review the balance sheet and P&L. Focus on debt-to-equity ratios and margin stability."
-        }
-
-        # Parallel analysis to respect free tier speed (Flash is fast)
-        tasks = [self._get_llm_completion(prompt, context) for prompt in selected_agents.values()]
+        # Respect free tier speed with Flash
+        tasks = [self._get_llm_completion(prompt, context) for prompt in INVESTOR_AGENTS.values()]
         results = await asyncio.gather(*tasks)
         
-        agent_reports = dict(zip(selected_agents.keys(), results))
+        agent_reports = dict(zip(INVESTOR_AGENTS.keys(), results))
 
-        # Final Synthesis
-        pm_prompt = "You are the Portfolio Manager. Synthesize the findings from Buffett, Burry, Graham, Lynch, Fisher, and the Data Agents. Provide a final Buy/Hold/Sell recommendation with a confidence score (0-1)."
+        pm_prompt = "You are the Portfolio Manager. Synthesize the findings from our specialized agents and the data. Provide a final Buy/Hold/Sell recommendation with a confidence score (0-1)."
         final_decision = await self._get_llm_completion(pm_prompt, f"Analyst Submissions:\n{json.dumps(agent_reports, indent=2)}")
 
         return {
