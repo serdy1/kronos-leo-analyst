@@ -1,3 +1,13 @@
+---
+title: Kronos Leo Analyst
+emoji: 🌖
+colorFrom: indigo
+colorTo: red
+sdk: docker
+pinned: false
+license: mit
+---
+
 # Kronos-Leo-Analyst (Future-Vision MCP)
 
 A production-ready FastAPI-based MCP server that integrates the **Kronos Foundation Model** (candlestick forecasting) with **Agentic Multi-Agent Investment Simulation** logic.
