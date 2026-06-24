@@ -7,10 +7,11 @@ import httpx
 import json
 
 try:
-    from investor_agents import INVESTOR_AGENTS
+    from investor_agents import CORE_SQUAD, FULL_COUNCIL
     from rules import STRATEGIC_RULES
 except ImportError:
-    INVESTOR_AGENTS = {}
+    CORE_SQUAD = {}
+    FULL_COUNCIL = {}
     STRATEGIC_RULES = {}
 
 class LightweightHedgeFundEngine:
@@ -22,7 +23,7 @@ class LightweightHedgeFundEngine:
         self.gemini_url = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
         self.openai_url = "https://api.openai.com/v1/chat/completions"
 
-    async def _get_llm_completion(self, system_prompt: str, user_content: str):
+    async def _get_llm_completion(self, system_prompt: str, user_content: str, temperature: float = 0.7):
         if self.gemini_key:
             url = self.gemini_url
             key = self.gemini_key
@@ -45,9 +46,9 @@ class LightweightHedgeFundEngine:
                             {"role": "system", "content": system_prompt},
                             {"role": "user", "content": user_content}
                         ],
-                        "temperature": 0.7
+                        "temperature": temperature
                     },
-                    timeout=45.0 # Increased timeout for slow upstream
+                    timeout=60.0 # Increased for larger council synthesis
                 )
                 data = response.json()
                 if "choices" in data:
@@ -60,7 +61,7 @@ class LightweightHedgeFundEngine:
         try:
             stock = yf.Ticker(ticker)
             info = stock.info
-            # v3.8.0 Low-RAM adjustment: Reduce history to 3 months
+            # v4.1.0 Low-RAM adjustment
             hist = stock.history(period="3mo")
             
             if hist.empty:
@@ -90,27 +91,57 @@ class LightweightHedgeFundEngine:
         except Exception as e:
             return {"error": f"Finance API Error: {str(e)}"}
 
-    async def run_multi_agent_analysis(self, ticker: str):
+    async def run_core_analysis(self, ticker: str):
+        """Default behavior for 'analyze' tool: 5 core agents + RICO synthesis."""
         metrics = await self.fetch_financials(ticker)
-        if "error" in metrics:
-            return metrics
+        if "error" in metrics: return metrics
 
-        context = f"Financial Context for {ticker}:\n{json.dumps(metrics, indent=2)}"
-        context += f"\n\nStrategic Rules to Consider:\n{json.dumps(STRATEGIC_RULES, indent=2)}"
-
-        # Respect free tier speed with Flash
-        tasks = [self._get_llm_completion(prompt, context) for prompt in INVESTOR_AGENTS.values()]
-        results = await asyncio.gather(*tasks)
+        context = f"Data for {ticker}: {json.dumps(metrics)}"
         
-        agent_reports = dict(zip(INVESTOR_AGENTS.keys(), results))
+        # Parallel Concise Perspectives
+        tasks = [self._get_llm_completion(f"{p} Provide a 1-sentence perspective.", context) for p in CORE_SQUAD.values()]
+        results = await asyncio.gather(*tasks)
+        agent_reports = dict(zip(CORE_SQUAD.keys(), results))
 
-        pm_prompt = "You are the Portfolio Manager. Synthesize the findings from our specialized agents and the data. Provide a final Buy/Hold/Sell recommendation with a confidence score (0-1)."
-        final_decision = await self._get_llm_completion(pm_prompt, f"Analyst Submissions:\n{json.dumps(agent_reports, indent=2)}")
+        # RICO Synthesis
+        rico_prompt = "You are RICO, Chief Investment Strategist. Review the perspectives from Buffett, Graham, Lynch, Munger, and Damodaran. Synthesize them with the raw data into a final strategic decision (Buy/Hold/Sell) and a concise report."
+        final_decision = await self._get_llm_completion(rico_prompt, f"Analyst Inputs:\n{json.dumps(agent_reports)}")
 
         return {
             "ticker": ticker,
             "metrics": metrics,
-            "analyst_reports": agent_reports,
-            "portfolio_manager_decision": final_decision,
-            "engine": "Gemini-1.5-Flash" if self.gemini_key else "GPT-4o-Mini"
+            "core_squad_perspectives": agent_reports,
+            "rico_strategic_verdict": final_decision,
+            "mode": "Core Hybrid (v4.1.0)"
+        }
+
+    async def run_full_council(self, ticker: str):
+        """On-demand behavior for 'council_analysis' tool: All 19 agents."""
+        metrics = await self.fetch_financials(ticker)
+        if "error" in metrics: return metrics
+
+        context = f"Data for {ticker}: {json.dumps(metrics)}"
+        
+        # Sequential Batching to avoid rate limits
+        agent_names = list(FULL_COUNCIL.keys())
+        agent_reports = {}
+        
+        # Process in batches of 5
+        for i in range(0, len(agent_names), 5):
+            batch = agent_names[i:i+5]
+            tasks = [self._get_llm_completion(FULL_COUNCIL[name], context) for name in batch]
+            results = await asyncio.gather(*tasks)
+            for name, report in zip(batch, results):
+                agent_reports[name] = report
+
+        # Final Council Synthesis
+        pm_prompt = "You are the Portfolio Manager. Review the analysis from all 19 legendary investors. Provide a comprehensive board-room summary and a final investment verdict."
+        final_decision = await self._get_llm_completion(pm_prompt, f"Council Reports:\n{json.dumps(agent_reports)}")
+
+        return {
+            "ticker": ticker,
+            "metrics": metrics,
+            "council_reports": agent_reports,
+            "final_verdict": final_decision,
+            "mode": "Full Council Siege (v4.1.0)"
         }
