@@ -3,7 +3,7 @@ import json
 import logging
 import sys
 
-# Ensure 'src' is in the path for reliable imports on Render
+# Ensure 'src' is in the path for reliable imports
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 if BASE_DIR not in sys.path:
     sys.path.append(BASE_DIR)
@@ -67,23 +67,30 @@ async def root_endpoint(request):
         "message": "Kronos Analyst MCP is live. Connect via /mcp/sse"
     })
 
-# --- v3.7.2: THE ABSOLUTE HOST BYPASS ---
-# We strip the Host header early and set a custom server value in the scope
-# to prevent any 421 errors from Starlette/Uvicorn or FastMCP internals.
+# --- v3.9.0: THE UNIVERSAL HOST BYPASS ---
+# This version detects the environment (Render vs HF) and adjusts the Host header accordingly
+# to bypass the 421 Misdirected Request error across ALL platforms.
 
 mcp_asgi_app = mcp.sse_app()
 
 async def mcp_handler(scope, receive, send):
     if scope["type"] == "http":
-        # Force rewrite the scope entirely to bypass 421
         headers = scope.get("headers", [])
-        # Strip ALL host-related headers that could trigger a 421 mismatch
-        new_headers = [(n, v) for n, v in headers if n.lower() not in (b"host", b"x-forwarded-host")]
-        # Add the external host explicitly
-        render_host = os.environ.get("RENDER_EXTERNAL_HOSTNAME", "kronos-leo-analyst.onrender.com").encode()
-        new_headers.append((b"host", render_host))
-        scope["headers"] = new_headers
-        # Nullify server to prevent internal validation
+        
+        # Identify the correct external host based on the environment
+        render_host = os.environ.get("RENDER_EXTERNAL_HOSTNAME")
+        hf_host = os.environ.get("SPACE_ID", "").replace("/", "-") + ".hf.space" if os.environ.get("SPACE_ID") else None
+        
+        # Priority: 1. Render Host, 2. HF Host, 3. Incoming Host (fallback)
+        target_host = render_host or hf_host
+        
+        if target_host:
+            logger.info(f"Patching Host header to: {target_host}")
+            new_headers = [(n, v) for n, v in headers if n.lower() not in (b"host", b"x-forwarded-host")]
+            new_headers.append((b"host", target_host.encode()))
+            scope["headers"] = new_headers
+        
+        # Nullify server to prevent internal validation/mismatch
         scope["server"] = None
 
     await mcp_asgi_app(scope, receive, send)
@@ -130,7 +137,6 @@ app = app_orchestrator
 if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 10000))
-    # Disable proxy_headers and host validation in uvicorn
     uvicorn.run(
         app, 
         host="0.0.0.0", 
