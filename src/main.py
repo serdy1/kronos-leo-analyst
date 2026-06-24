@@ -67,29 +67,23 @@ async def root_endpoint(request):
         "message": "Kronos Analyst MCP is live. Connect via /mcp/sse"
     })
 
-# --- v3.9.0: THE UNIVERSAL HOST BYPASS ---
-# This version detects the environment (Render vs HF) and adjusts the Host header accordingly
-# to bypass the 421 Misdirected Request error across ALL platforms.
+# --- v3.9.1: THE UNIVERSAL HOST BYPASS ---
+# This version strips the Host and Connection headers and locks it to 127.0.0.1:port
+# to completely bypass the 421 Misdirected Request error across Hugging Face and Render.
 
 mcp_asgi_app = mcp.sse_app()
 
 async def mcp_handler(scope, receive, send):
     if scope["type"] == "http":
-        headers = scope.get("headers", [])
+        headers = []
+        for name, value in scope.get("headers", []):
+            name_lower = name.lower()
+            if name_lower not in (b"host", b"x-forwarded-host", b"connection", b"te"):
+                headers.append((name, value))
         
-        # Identify the correct external host based on the environment
-        render_host = os.environ.get("RENDER_EXTERNAL_HOSTNAME")
-        hf_host = os.environ.get("SPACE_ID", "").replace("/", "-") + ".hf.space" if os.environ.get("SPACE_ID") else None
-        
-        # Priority: 1. Render Host, 2. HF Host, 3. Incoming Host (fallback)
-        target_host = render_host or hf_host
-        
-        if target_host:
-            logger.info(f"Patching Host header to: {target_host}")
-            new_headers = [(n, v) for n, v in headers if n.lower() not in (b"host", b"x-forwarded-host")]
-            new_headers.append((b"host", target_host.encode()))
-            scope["headers"] = new_headers
-        
+        port = os.environ.get("PORT", "7860")
+        headers.append((b"host", f"127.0.0.1:{port}".encode()))
+        scope["headers"] = headers
         # Nullify server to prevent internal validation/mismatch
         scope["server"] = None
 
@@ -136,7 +130,7 @@ app = app_orchestrator
 
 if __name__ == "__main__":
     import uvicorn
-    port = int(os.environ.get("PORT", 10000))
+    port = int(os.environ.get("PORT", 7860))
     uvicorn.run(
         app, 
         host="0.0.0.0", 
