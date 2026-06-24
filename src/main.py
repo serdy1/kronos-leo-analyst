@@ -60,46 +60,56 @@ async def analyze(ticker: str) -> str:
 async def health_endpoint(request):
     return JSONResponse({"status": "online"})
 
-async def root_endpoint(request):
-    return JSONResponse({
-        "status": "online",
-        "mcp_sse_path": "/mcp/sse",
-        "message": "Kronos Analyst MCP is live. Connect via /mcp/sse"
-    })
-
-# --- v3.9.1: THE UNIVERSAL HOST BYPASS ---
-# This version strips the Host and Connection headers and locks it to 127.0.0.1:port
-# to completely bypass the 421 Misdirected Request error across Hugging Face and Render.
+# --- v4.0.0: THE PRODUCTION-READY MCP ARCHITECTURE ---
+# To fix 404s and 421s simultaneously:
+# 1. We let FastMCP's sse_app handle its own internal routing.
+# 2. We wrap it in a clean Starlette Mount.
+# 3. We implement a Nuclear Header Cleanse to bypass 421 on CDNs/Proxies.
 
 mcp_asgi_app = mcp.sse_app()
 
-async def mcp_handler(scope, receive, send):
+async def mcp_orchestrator(scope, receive, send):
     if scope["type"] == "http":
+        # 1. Nuclear Header Cleanse (Bypass 421)
+        # We strip Host/Connection headers to make the request 'anonymous' to internal validation
         headers = []
         for name, value in scope.get("headers", []):
             name_lower = name.lower()
             if name_lower not in (b"host", b"x-forwarded-host", b"connection", b"te"):
                 headers.append((name, value))
         
+        # Lock to internal loopback to satisfy Starlette/FastMCP host checks
         port = os.environ.get("PORT", "7860")
         headers.append((b"host", f"127.0.0.1:{port}".encode()))
         scope["headers"] = headers
-        # Nullify server to prevent internal validation/mismatch
         scope["server"] = None
 
-    await mcp_asgi_app(scope, receive, send)
+        # 2. SSE Buffering Bypass (Bypass 'pending_auth' / yellow light)
+        async def send_wrapper(message):
+            if message["type"] == "http.response.start":
+                headers = message.get("headers", [])
+                headers.append((b"x-accel-buffering", b"no"))
+                headers.append((b"cache-control", b"no-cache, no-transform"))
+                message["headers"] = headers
+            await send(message)
 
-main_app = Starlette(
+        await mcp_asgi_app(scope, receive, send_wrapper)
+    else:
+        # Pass non-http scopes (lifespan, etc.) directly
+        await mcp_asgi_app(scope, receive, send)
+
+# Main Application with clean mounting
+# We mount at root so /sse and /messages resolve correctly without /mcp prefix complexity
+app = Starlette(
     debug=True,
     routes=[
         Route("/health", health_endpoint),
-        Route("/", root_endpoint),
-        Mount("/mcp", mcp_handler),
+        Mount("/", mcp_orchestrator),
     ]
 )
 
 # Wide-open CORS
-main_app.add_middleware(
+app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_credentials=True,
@@ -108,29 +118,10 @@ main_app.add_middleware(
     expose_headers=["*"],
 )
 
-async def app_orchestrator(scope, receive, send):
-    if scope["type"] == "http":
-        path = scope.get("path", "")
-        if path == "/health":
-            response = JSONResponse({"status": "online"})
-            await response(scope, receive, send)
-            return
-
-    async def send_wrapper(message):
-        if message["type"] == "http.response.start":
-            headers = message.get("headers", [])
-            headers.append((b"x-accel-buffering", b"no"))
-            headers.append((b"cache-control", b"no-cache, no-transform"))
-            message["headers"] = headers
-        await send(message)
-
-    await main_app(scope, receive, send_wrapper)
-
-app = app_orchestrator
-
 if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 7860))
+    # Enforce HTTP/1.1 (h11) for SSE stability
     uvicorn.run(
         app, 
         host="0.0.0.0", 
