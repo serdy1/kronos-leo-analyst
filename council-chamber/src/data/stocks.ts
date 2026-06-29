@@ -1,12 +1,11 @@
 export interface StockQuote {
   ticker: string;
   name: string;
+  sector: string;
   price: number;
+  targetPrice: number;
+  currency: string;
   change: number;
-  changePercent: number;
-  targetPrice?: number;
-  buybackTarget?: number;
-  currency?: string;
 }
 
 export interface StockData {
@@ -16,11 +15,11 @@ export interface StockData {
 
 export const stocks: StockData = {
   quotes: [
-    { ticker: "THYAO", name: "Türk Hava Yolları", price: 330.75, change: 2.25, changePercent: 0.68, targetPrice: 442.82 },
-    { ticker: "FROTO", name: "Ford Otosan", price: 954.50, change: -14.00, changePercent: -1.45, targetPrice: 1120.00, buybackTarget: 900.00 },
-    { ticker: "PGSUS", name: "Pegasus", price: 215.20, change: 5.80, changePercent: 2.77, targetPrice: 260.00 },
-    { ticker: "ANHYT", name: "Anadolu Hayat", price: 78.35, change: -0.65, changePercent: -0.82, targetPrice: 95.00 },
-    { ticker: "NFLX", name: "Netflix Inc.", price: 692.45, change: 15.30, changePercent: 2.26, targetPrice: 750.00, currency: "$" },
+    { ticker: "THYAO", name: "Türk Hava Yolları", sector: "Havacılık", price: 330.75, targetPrice: 442.82, currency: "₺", change: 0.68 },
+    { ticker: "FROTO", name: "Ford Otosan", sector: "Otomotiv", price: 86.25, targetPrice: 120.00, currency: "₺", change: -1.45 },
+    { ticker: "PGSUS", name: "Pegasus", sector: "Havacılık", price: 180.10, targetPrice: 248.50, currency: "₺", change: 1.20 },
+    { ticker: "ANHYT", name: "Anadolu Hayat", sector: "Sigorta", price: 102.60, targetPrice: 145.00, currency: "₺", change: 2.15 },
+    { ticker: "NFLX", name: "Netflix Inc.", sector: "Teknoloji / Medya", price: 73.85, targetPrice: 102.50, currency: "$", change: -0.90 },
   ],
   lastUpdated: new Date().toISOString(),
 };

@@ -1,171 +1,86 @@
-import { useRef, useEffect } from "react";
-import { TrendingUp, TrendingDown, Minus, MessageSquare, Loader2 } from "lucide-react";
 import { DebateMessage } from "../data/debates";
-import { agents } from "../data/agents";
+import { analysts } from "../data/agents";
 
 interface TranscriptViewerProps {
   messages: DebateMessage[];
-  activeStock: {
-    ticker: string;
-    price: number;
-  };
-  isStreaming: boolean;
+  currentSpeaker: string | null;
 }
 
-function StanceIcon({ stance }: { stance: "bullish" | "bearish" | "neutral" }) {
-  switch (stance) {
-    case "bullish":
-      return <TrendingUp className="w-3 h-3 text-emerald-400" />;
-    case "bearish":
-      return <TrendingDown className="w-3 h-3 text-rose-400" />;
-    case "neutral":
-      return <Minus className="w-3 h-3 text-amber-400" />;
-  }
+function getEmotionColor(emotion: string): string {
+  if (emotion.includes("Bullish")) return "text-emerald-400 bg-emerald-950/60 border-emerald-800";
+  if (emotion.includes("Bearish")) return "text-red-400 bg-red-950/60 border-red-800";
+  return "text-yellow-400 bg-yellow-950/60 border-yellow-800";
 }
 
-function StanceBadge({ stance }: { stance: "bullish" | "bearish" | "neutral" }) {
-  if (stance === "bullish") {
-    return (
-      <span className="text-[9px] bg-emerald-950/60 text-emerald-400 border border-emerald-800/60 px-1.5 py-0.5 rounded font-mono font-bold tracking-wider">
-        BOĞA
-      </span>
-    );
-  }
-  if (stance === "bearish") {
-    return (
-      <span className="text-[9px] bg-rose-950/60 text-rose-400 border border-rose-800/60 px-1.5 py-0.5 rounded font-mono font-bold tracking-wider">
-        AYI
-      </span>
-    );
-  }
-  return (
-    <span className="text-[9px] bg-amber-950/60 text-amber-400 border border-amber-800/60 px-1.5 py-0.5 rounded font-mono font-bold tracking-wider">
-      NÖTR
-    </span>
+function findSpeakerId(name: string): string | undefined {
+  const found = analysts.find(
+    (a) => a.name.toLowerCase() === name.toLowerCase()
   );
+  if (found) return found.id;
+
+  const partial = analysts.find(
+    (a) =>
+      name.toLowerCase().includes(a.name.split(" ")[0].toLowerCase()) ||
+      a.name.split(" ")[0].toLowerCase().includes(name.toLowerCase())
+  );
+  return partial?.id;
 }
 
-export function TranscriptViewer({ messages, activeStock, isStreaming }: TranscriptViewerProps) {
-  const scrollRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-    }
-  }, [messages, isStreaming]);
+export function TranscriptViewer({ messages, currentSpeaker }: TranscriptViewerProps) {
+  if (messages.length === 0) {
+    return (
+      <div className="flex-1 flex items-center justify-center text-slate-600 text-xs">
+        <div className="text-center">
+          <i className="fa-solid fa-comments text-2xl mb-2 opacity-30" />
+          <p>Henüz tartışma kaydı yok</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div className="border border-slate-800 rounded-xl bg-[#080d16] overflow-hidden h-full flex flex-col shadow-xl">
-      
-      {/* Terminal Header */}
-      <div className="flex items-center justify-between px-4 py-3 bg-slate-900/80 border-b border-slate-800">
-        <div className="flex items-center gap-2">
-          <MessageSquare className="w-4 h-4 text-emerald-400" />
-          <span className="text-sm text-white font-bold tracking-wider font-mono">TRANSCRIPT</span>
-        </div>
-        <div className="flex items-center gap-2 text-xs text-slate-500 font-mono">
-          <span>{activeStock.ticker}</span>
-          <span className="w-1 h-1 rounded-full bg-slate-600" />
-          <span>{new Date().toLocaleDateString("tr-TR")}</span>
-          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-          <span className="text-emerald-400">RECV</span>
-        </div>
-      </div>
+    <div className="flex-1 overflow-y-auto p-4 space-y-3">
+      {messages.map((msg, idx) => {
+        const speakerId = findSpeakerId(msg.speaker);
+        const agent = analysts.find((a) => a.id === speakerId);
+        const isSpeaking = currentSpeaker === speakerId;
 
-      {/* Context bar */}
-      <div className="px-4 py-2 bg-[#050a12] border-b border-slate-800/60">
-        <span className="text-xs text-slate-500 font-mono">
-          <span className="text-emerald-400">$</span>{" "}
-          {activeStock.ticker} · Anlık piyasa analizi başlatıldı
-        </span>
-      </div>
-
-      {/* Messages Feed */}
-      <div
-        ref={scrollRef}
-        className="flex-1 overflow-y-auto p-4 space-y-4 min-h-[420px] max-h-[560px]"
-      >
-        {messages.length === 0 && !isStreaming && (
-          <div className="flex flex-col items-center justify-center h-40 text-slate-600 font-mono text-xs gap-3">
-            <MessageSquare className="w-8 h-8 opacity-30" />
-            <span>Konuşma akışı bekleniyor...</span>
-          </div>
-        )}
-
-        {messages.map((msg, i) => {
-          const agent = agents.find((a) => a.id === msg.agentId);
-
-          return (
+        return (
+          <div
+            key={idx}
+            className={`flex gap-3 p-3 rounded-xl border transition-all duration-500 ${
+              isSpeaking
+                ? "bg-slate-800/80 border-slate-600/60 shadow-md shadow-blue-900/10"
+                : "bg-slate-800/30 border-slate-700/30"
+            }`}
+          >
             <div
-              key={i}
-              className="fade-in-up"
-              style={{ animationDelay: `${i * 0.05}s` }}
+              className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 border text-xs ${
+                agent
+                  ? `${agent.bgColor} ${agent.textColor} ${agent.borderColor}`
+                  : "bg-slate-800 text-slate-400 border-slate-600"
+              }`}
             >
-              <div className="flex items-start gap-3">
-                {/* Avatar */}
-                <div
-                  className={`flex-shrink-0 w-9 h-9 rounded-lg flex items-center justify-center border text-[11px] font-bold ${
-                    agent ? agent.color : "text-slate-400 bg-slate-800 border-slate-700"
-                  }`}
-                >
-                  {agent ? (
-                    <i className={`fa-solid ${agent.icon}`} />
-                  ) : (
-                    msg.agentName.split(" ").map((s) => s[0]).join("").slice(0, 2)
-                  )}
-                </div>
-
-                {/* Content */}
-                <div className="flex-1 min-w-0">
-                  {/* Name row */}
-                  <div className="flex items-center gap-2 mb-1.5 flex-wrap">
-                    <span className="text-sm font-bold text-white leading-none">{msg.agentName}</span>
-                    <StanceBadge stance={msg.stance} />
-                    <div className="flex items-center gap-1 ml-auto">
-                      <StanceIcon stance={msg.stance} />
-                      <span className="text-[10px] text-slate-600 font-mono">
-                        {new Date(msg.timestamp).toLocaleTimeString("tr-TR")}
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Message bubble */}
-                  <div
-                    className={`p-3 rounded-lg border text-sm text-slate-300 leading-relaxed ${
-                      msg.stance === "bullish"
-                        ? "bg-emerald-950/20 border-emerald-900/40"
-                        : msg.stance === "bearish"
-                        ? "bg-rose-950/20 border-rose-900/40"
-                        : "bg-slate-900/40 border-slate-800/40"
-                    }`}
-                  >
-                    {msg.message}
-                  </div>
-                </div>
-              </div>
+              <i className={`fa-solid ${agent?.icon || "fa-user"} text-[10px]`} />
             </div>
-          );
-        })}
-
-        {/* Streaming indicator */}
-        {isStreaming && (
-          <div className="flex items-center gap-3 p-3 rounded-lg bg-blue-950/20 border border-blue-900/30">
-            <Loader2 className="w-4 h-4 text-blue-400 animate-spin flex-shrink-0" />
-            <span className="text-xs text-blue-400 font-mono">
-              Sıradaki analist hazırlanıyor
-              <span className="cursor-blink"> _</span>
-            </span>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 mb-1">
+                <span className={`text-xs font-bold ${agent?.textColor || "text-slate-300"}`}>
+                  {msg.speaker}
+                </span>
+                <span
+                  className={`text-[9px] px-1.5 py-0.5 rounded-full border font-medium ${getEmotionColor(
+                    msg.emotion
+                  )}`}
+                >
+                  {msg.emotion}
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-400 leading-relaxed">{msg.message}</p>
+            </div>
           </div>
-        )}
-
-        {/* Transcript end */}
-        {!isStreaming && messages.length > 0 && (
-          <div className="flex items-center gap-2 text-xs text-slate-600 font-mono pt-2">
-            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-            TRANSCRIPT_END // {messages.length} STATEMENT(S) LOGGED
-          </div>
-        )}
-      </div>
+        );
+      })}
     </div>
   );
 }

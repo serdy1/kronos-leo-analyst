@@ -1,120 +1,108 @@
-import { useState } from "react";
-import { agents } from "../data/agents";
-import { AgentCard } from "./agent-card";
+import { Analyst } from "../data/agents";
 
 interface BoardroomTableProps {
-  activeStock: {
-    ticker: string;
-    price: number;
-    currency?: string;
-  };
+  activeAgents: Analyst[];
   currentSpeaker: string | null;
-  activeSessionAgentIds: number[];
 }
 
-export function BoardroomTable({ 
-  activeStock, 
-  currentSpeaker, 
-  activeSessionAgentIds 
-}: BoardroomTableProps) {
-  const [selectedAgent, setSelectedAgent] = useState<number | null>(null);
-
-  const total = agents.length;
-  const radiusX = 240; // Horizontal radius
-  const radiusY = 75;  // Vertical radius for 3D ellipse perspective
+export function BoardroomTable({ activeAgents, currentSpeaker }: BoardroomTableProps) {
+  const centerX = 50;
+  const centerY = 45;
+  const radiusX = 36;
+  const radiusY = 16;
 
   return (
-    <>
-      <div className="flex flex-col items-center justify-center py-6">
-        <h4 className="text-[10px] font-mono text-slate-500 uppercase tracking-widest mb-10">
-          <i className="fa-solid fa-circle-nodes text-blue-500 mr-1.5" /> CANLI OTURUM ODASI
-        </h4>
-        
-        <div className="boardroom-perspective w-full max-w-2xl h-72 flex items-center justify-center relative">
-          
-          {/* CENTER BOARDROOM TABLE */}
-          <div className="boardroom-table w-80 h-28 bg-gradient-to-b from-amber-900 to-amber-950 border-4 border-amber-800 rounded-full flex items-center justify-center relative shadow-[0_25px_60px_rgba(0,0,0,0.8)] z-10">
-            <div className="absolute inset-2 bg-slate-950/90 rounded-full border border-amber-900/40 flex flex-col items-center justify-center p-2 text-center">
-              <span className="text-[10px] font-bold text-slate-400 tracking-wider uppercase font-mono">
-                {activeStock.ticker} ANALİZİ
-              </span>
-              <span className="text-[10px] text-blue-400 font-mono mt-0.5">
-                {activeStock.price.toFixed(2)} ₺
-              </span>
-            </div>
-          </div>
+    <div className="relative w-full h-full overflow-hidden">
+      <svg className="absolute inset-0 w-full h-full" viewBox="0 0 100 55" preserveAspectRatio="xMidYMid slice">
+        <defs>
+          <radialGradient id="tableGlow" cx="50%" cy="50%" r="50%">
+            <stop offset="0%" stopColor="#1e3a5f" stopOpacity="0.6" />
+            <stop offset="60%" stopColor="#0f1b33" stopOpacity="0.3" />
+            <stop offset="100%" stopColor="transparent" stopOpacity="0" />
+          </radialGradient>
+          <filter id="glow">
+            <feGaussianBlur stdDeviation="1" result="blur" />
+            <feMerge>
+              <feMergeNode in="blur" />
+              <feMergeNode in="SourceGraphic" />
+            </feMerge>
+          </filter>
+        </defs>
 
-          {/* CIRCULAR ANALYST SEATS */}
-          {agents.map((agent, i) => {
-            const angle = (i / total) * Math.PI * 2 - Math.PI / 2;
-            const x = radiusX * Math.cos(angle);
-            const y = radiusY * Math.sin(angle);
+        {/* center ellipse glow */}
+        <ellipse cx={centerX} cy={centerY} rx={radiusX + 8} ry={radiusY + 8} fill="url(#tableGlow)" />
 
-            const isSpeaking = currentSpeaker && agent.name.toLowerCase().includes(currentSpeaker.toLowerCase());
-            const isAtTable = activeSessionAgentIds.includes(agent.id);
+        {/* table ellipse */}
+        <ellipse cx={centerX} cy={centerY} rx={radiusX} ry={radiusY} fill="#0f172a" stroke="#334155" strokeWidth="0.8" />
+        <ellipse cx={centerX} cy={centerY} rx={radiusX - 3} ry={radiusY - 3} fill="none" stroke="#1e293b" strokeWidth="0.4" />
+        <ellipse cx={centerX} cy={centerY} rx={radiusX - 6} ry={radiusY - 6} fill="none" stroke="#1e293b" strokeWidth="0.3" />
 
-            // 3D layering z-index
-            let zIndex = y < 0 ? 5 : 15;
-            if (isSpeaking) zIndex = 30;
+        {/* table divider line */}
+        <line x1={centerX - radiusX} y1={centerY} x2={centerX + radiusX} y2={centerY} stroke="#1e293b" strokeWidth="0.4" />
 
-            return (
-              <button
-                key={agent.id}
-                onClick={() => setSelectedAgent(agent.id)}
-                className="absolute flex flex-col items-center transition-all duration-500 cursor-pointer group"
-                style={{
-                  left: `calc(50% + ${x}px)`,
-                  top: `calc(50% + ${y}px)`,
-                  transform: `translate(-50%, -50%) scale(${isSpeaking ? 1.15 : 1})`,
-                  zIndex: zIndex,
-                }}
+        {/* decorative diamond */}
+        <rect x={centerX - 1.5} y={centerY - 1.5} width={3} height={3} fill="#475569" transform={`rotate(45 ${centerX} ${centerY})`} />
+      </svg>
+
+      {/* seats */}
+      {activeAgents.length > 0 &&
+        activeAgents.slice(0, 5).map((agent, i) => {
+          const angle = (i / 5) * Math.PI * 2 - Math.PI / 2;
+          const x = centerX + radiusX * Math.cos(angle);
+          const y = centerY + radiusY * Math.sin(angle);
+          const isSpeaker = currentSpeaker === agent.id;
+          const topHalf = Math.sin(angle) < 0;
+
+          return (
+            <div
+              key={agent.id}
+              className={`absolute transition-all duration-700 ${
+                isSpeaker ? "z-30 scale-110" : "z-10"
+              }`}
+              style={{
+                left: `${x}%`,
+                top: `${y}%`,
+                transform: `translate(-50%, -50%) ${isSpeaker ? "scale(1.15)" : topHalf ? "scale(0.95)" : "scale(1)"}`,
+              }}
+            >
+              {/* ping aura for speaker */}
+              {isSpeaker && (
+                <div className="absolute inset-0 rounded-full animate-ping bg-blue-500/30" style={{ width: 44, height: 44, left: -2, top: -2 }} />
+              )}
+              <div
+                className={`w-10 h-10 rounded-full flex items-center justify-center text-sm border-2 transition-all duration-500 relative ${
+                  agent.bgColor} ${agent.borderColor} ${
+                  isSpeaker
+                    ? "shadow-lg shadow-blue-500/40 ring-1 ring-blue-400"
+                    : "shadow-md shadow-black/30"
+                }`}
               >
-                {/* Seat Avatar Container */}
-                <div 
-                  className={`w-12 h-12 rounded-full flex items-center justify-center relative border transition-all duration-300 ${
-                    isSpeaking
-                      ? "bg-blue-900 border-blue-400 shadow-[0_0_20px_rgba(59,130,246,0.6)]"
-                      : isAtTable
-                      ? "bg-[#0f172a] border-blue-500/50"
-                      : "bg-[#090d16] border-slate-800 hover:border-slate-600"
-                  }`}
-                >
-                  {/* Analyst Icon inside */}
-                  <div className={`w-9.5 h-9.5 rounded-full flex items-center justify-center border text-xs font-semibold ${agent.color}`}>
-                    <i className={`fa-solid ${agent.icon} text-xs`} />
-                  </div>
-
-                  {/* Pulsing Neon Glow Ring for Speaker */}
-                  {isSpeaking && (
-                    <span className="absolute -inset-1 rounded-full border border-blue-400 animate-ping opacity-60 pointer-events-none" />
-                  )}
-                </div>
-
-                {/* Name Label */}
-                <div 
-                  className={`mt-1.5 px-1.5 py-0.5 rounded text-[8px] font-bold tracking-tight whitespace-nowrap shadow-md font-mono ${
-                    isSpeaking 
-                      ? "bg-blue-500 text-white border border-blue-400"
-                      : isAtTable
-                      ? "bg-blue-950/80 text-blue-300 border border-blue-900/60"
-                      : "bg-[#090d16] text-slate-400 border border-slate-800/80 group-hover:border-slate-500 group-hover:text-slate-200 transition-colors"
-                  }`}
-                >
+                <i className={`fa-solid ${agent.icon} ${agent.textColor}`} />
+              </div>
+              <div
+                className={`text-center mt-1 transition-colors duration-500 ${
+                  isSpeaker ? agent.textColor : "text-slate-500"
+                }`}
+              >
+                <div className={`text-[9px] font-bold leading-tight ${isSpeaker ? "" : "text-slate-400"}`}>
                   {agent.name.split(" ")[0]}
                 </div>
-              </button>
-            );
-          })}
+                <div className="text-[7px] text-slate-600 truncate max-w-[80px]">
+                  {agent.title}
+                </div>
+              </div>
+            </div>
+          );
+        })}
 
-        </div>
+      {/* center label */}
+      <div
+        className="absolute text-center"
+        style={{ left: `${centerX}%`, top: `${centerY}%`, transform: "translate(-50%, -50%)" }}
+      >
+        <div className="text-[10px] font-bold text-slate-600 tracking-widest uppercase">Konsey</div>
+        <div className="text-[8px] text-slate-700 font-mono">MASASI</div>
       </div>
-
-      {selectedAgent && (
-        <AgentCard
-          analyst={agents.find((a) => a.id === selectedAgent)!}
-          onClose={() => setSelectedAgent(null)}
-        />
-      )}
-    </>
+    </div>
   );
 }
