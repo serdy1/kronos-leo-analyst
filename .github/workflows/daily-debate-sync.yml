@@ -1,0 +1,37 @@
+name: Daily Debate Sync
+
+on:
+  schedule:
+    - cron: "30 15 * * *"  # 15:30 UTC = 18:30 TRT
+  workflow_dispatch:
+
+jobs:
+  generate-debate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Create data directory
+        run: mkdir -p council-chamber/src/data
+
+      - name: Generate daily debate
+        run: node council-chamber/scripts/generate-daily-debate.mjs
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          BIST_API_KEY: ${{ secrets.BIST_API_KEY }}
+
+      - name: Commit updated data
+        run: |
+          git config user.name "Council Chamber Bot"
+          git config user.email "bot@council-chamber"
+          git add council-chamber/src/data/debates.ts council-chamber/src/data/stocks.ts
+          git diff --cached --quiet || (git commit -m "chore(council): daily debate sync $(date +%Y-%m-%d)" && git push)
