@@ -1,17 +1,495 @@
 <!DOCTYPE html>
 <html lang="tr">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Büyük Yatırım Konseyi - Terminal</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    
+    <!-- Babel for JSX -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
     <!-- Font Awesome for Icons -->
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
-  </head>
-  <body>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #020617;
+            color: #cbd5e1;
+            overflow: hidden;
+        }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+
+        ::-webkit-scrollbar { width: 4px; height: 4px; }
+        ::-webkit-scrollbar-track { background: #0f172a; }
+        ::-webkit-scrollbar-thumb { background: #334155; border-radius: 2px; }
+        ::-webkit-scrollbar-thumb:hover { background: #475569; }
+
+        .cursor-blink { animation: blink 1s step-end infinite; }
+        @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+
+        .fade-in-up { animation: fadeInUp 0.4s ease-out forwards; }
+        @keyframes fadeInUp {
+            from { opacity: 0; transform: translateY(8px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .boardroom-perspective { perspective: 1000px; }
+        .boardroom-table {
+            transform: rotateX(25deg);
+            transform-style: preserve-3d;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.7);
+        }
+
+        .pulse-border { animation: pulseGlow 2s infinite; }
+        @keyframes pulseGlow {
+            0%, 100% { border-color: rgba(59, 130, 246, 0.4); box-shadow: 0 0 5px rgba(59, 130, 246, 0.1); }
+            50% { border-color: rgba(59, 130, 246, 0.8); box-shadow: 0 0 15px rgba(59, 130, 246, 0.3); }
+        }
+
+        .hide-scrollbar::-webkit-scrollbar { display: none; }
+        .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+    </style>
+</head>
+<body>
     <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
-  </body>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        const AGENTS = [
+            { id: 1, name: "Aswath Damodaran", title: "Değerleme Dekanı", color: "text-blue-400 bg-blue-950/60 border-blue-800", icon: "fa-calculator", desc: "Hikaye ile rakamları birleştirir. Şirketin büyüme hikayesi finansal tablolarla uyuşuyor mu ona bakar." },
+            { id: 2, name: "Ben Graham", title: "Değer Yatırımının Babası", color: "text-stone-400 bg-stone-900 border-stone-700", icon: "fa-shield-halved", desc: "Güvenlik marjına bakar. Hisse net aktif değerinin altındaysa ve ucuzsa heyecanlanır." },
+            { id: 3, name: "Bill Ackman", title: "Aktivist Yatırımcı", color: "text-red-400 bg-red-950 border-red-800", icon: "fa-bullhorn", desc: "Yönetimde agresif değişimler, radikal kararlar ve büyük hamleler arar. Cesurdur." },
+            { id: 4, name: "Cathie Wood", title: "İnovasyon Kraliçesi", color: "text-fuchsia-400 bg-fuchsia-950 border-fuchsia-800", icon: "fa-rocket", desc: "Yapay zeka, genomik gibi yıkıcı teknolojilere odaklanır." },
+            { id: 5, name: "Charlie Munger", title: "Rasyonelliğin Kalesi", color: "text-amber-500 bg-amber-950 border-amber-900", icon: "fa-chess-rook", desc: "Harika bir şirketi makul bir fiyata almayı tercih eder. Dürüstlük, yönetim kalitesi ve 'Moat' arar." },
+            { id: 6, name: "Michael Burry", title: "The Big Short", color: "text-indigo-400 bg-indigo-950 border-indigo-800", icon: "fa-eye-low-vision", desc: "Herkesin atladığı krizleri veya derin değerleri bulur. Kontrariandır." },
+            { id: 7, name: "Mohnish Pabrai", title: "Dhandho Yatırımcısı", color: "text-emerald-400 bg-emerald-950 border-emerald-800", icon: "fa-coins", desc: "Tura gelirsem kazanırım, yazı gelirse az kaybederim. Asimetrik getiri potansiyeline bakar." },
+            { id: 8, name: "Nassim Taleb", title: "Kara Kuğu Analisti", color: "text-slate-300 bg-slate-800 border-slate-600", icon: "fa-crow", desc: "Antifragile yapıları sever. Kuyruk risklerine, sistemin çökme ihtimallerine odaklanır." },
+            { id: 9, name: "Peter Lynch", title: "Halkın Yatırımcısı", color: "text-green-400 bg-green-950 border-green-800", icon: "fa-store", desc: "Bildiğin işe yatırım yap. Günlük hayatta gördüğün, büyüyen pratik şirketleri seçer." },
+            { id: 10, name: "Phil Fisher", title: "Scuttlebutt Üstadı", color: "text-teal-400 bg-teal-950 border-teal-800", icon: "fa-magnifying-glass-chart", desc: "Şirketin müşterileriyle, çalışanlarıyla konuşur gibi derinlemesine büyüme analizi yapar." },
+            { id: 11, name: "Rakesh Jhunjhunwala", title: "Büyük Boğa", color: "text-orange-400 bg-orange-950 border-orange-800", icon: "fa-arrow-trend-up", desc: "Agresif, büyüme odaklı ve her zaman iyimser (boğa) perspektiften bakar." },
+            { id: 12, name: "Stanley Druckenmiller", title: "Makro Efsane", color: "text-cyan-400 bg-cyan-950 border-cyan-800", icon: "fa-globe", desc: "Likidite, merkez bankası politikaları ve büyük trendleri izler. Asimetrik durumlarda büyük oynar." },
+            { id: 13, name: "Warren Buffett", title: "Omaha Kahini", color: "text-yellow-500 bg-yellow-950 border-yellow-900", icon: "fa-landmark", desc: "Anlaşılması kolay, güçlü nakit akışı olan, rekabet avantajı yüksek şirketleri adil fiyata alır." },
+            { id: 14, name: "Edwin Lefèvre", title: "Spekülasyon Üstadı", color: "text-rose-400 bg-rose-950 border-rose-800", icon: "fa-user-secret", desc: "Piyasa psikolojisi, fiyat hareketleri ve trendlerin insan doğasıyla ilişkisine odaklanır." },
+            { id: 15, name: "Jack D. Schwager", title: "Piyasa Sihirbazı", color: "text-violet-400 bg-violet-950 border-violet-800", icon: "fa-wand-magic-sparkles", desc: "Başarılı trader'ların ortak özelliklerini, disiplin ve risk yönetimi stratejilerini arar." },
+            { id: 16, name: "Michele Cagan", title: "Yatırım 101 Rehberi", color: "text-sky-400 bg-sky-950 border-sky-800", icon: "fa-book-open", desc: "Temel finansal okuryazarlık, bilanço sağlığı ve yatırıma yeni başlayanların gözünden temelleri inceler." },
+            { id: 17, name: "Morgan Housel", title: "Paranın Psikoloğu", color: "text-lime-400 bg-lime-950 border-lime-800", icon: "fa-brain", desc: "Matematikten ziyade yatırımcı davranışlarına, beklenti yönetimine ve sabrın gücüne odaklanır." },
+            { id: 18, name: "Michael W. Covel", title: "Trend Takipçisi", color: "text-blue-300 bg-blue-900 border-blue-700", icon: "fa-chart-line", desc: "Temel analizi boşverip tamamen fiyat trendlerine ve momentum stratejilerine odaklanır." },
+            { id: 19, name: "Nicolas Darvas", title: "Kutu Teorisyeni", color: "text-pink-400 bg-pink-950 border-pink-800", icon: "fa-box", desc: "Fiyat ve hacim hareketlerini kutular (darvas box) içinde analiz edip kırılımlara oynar." }
+        ];
+
+        const STOCKS = [
+            { symbol: "THYAO", name: "Türk Hava Yolları", sector: "Havacılık", price: 330.75, targetPrice: 442.82, currency: "₺", change: 0.68 },
+            { symbol: "FROTO", name: "Ford Otosan", sector: "Otomotiv", price: 954.50, targetPrice: 1120.00, currency: "₺", change: -1.45 },
+            { symbol: "PGSUS", name: "Pegasus", sector: "Havacılık", price: 215.20, targetPrice: 260.00, currency: "₺", change: 1.20 },
+            { symbol: "ANHYT", name: "Anadolu Hayat", sector: "Sigorta", price: 78.35, targetPrice: 95.00, currency: "₺", change: 2.15 },
+            { symbol: "NFLX", name: "Netflix Inc.", sector: "Teknoloji / Medya", price: 692.45, targetPrice: 750.00, currency: "$", change: -0.90 }
+        ];
+
+        const INDICES = [
+            { name: "BIST 100", value: "10,248.50", change: "+1.38%", up: true },
+            { name: "SPX 500", value: "5,422.10", change: "+0.45%", up: true },
+            { name: "NASDAQ", value: "17,810.30", change: "-0.12%", up: false },
+            { name: "Dolar/TL", value: "32.8850", change: "+0.15%", up: true },
+            { name: "USD Index", value: "105.42", change: "-0.22%", up: false }
+        ];
+
+        async function fetchDebate(stock, selectedAnalysts) {
+            const analystContext = selectedAnalysts.map(a => `${a.name} (${a.title}): ${a.desc}`).join("\n");
+            const upside = (((stock.targetPrice - stock.price) / stock.price) * 100).toFixed(1);
+
+            // Fallback statik tartışma senaryosu (Gemini API olmadan çalışır)
+            return [
+                { speaker: selectedAnalysts[0].name, message: `${stock.symbol} için belirlenen ${stock.targetPrice} ${stock.currency} hedefi büyüme modellerimle uyuşuyor. Mevcut ${stock.price} ${stock.currency} fiyatı, %${upside} potansiyel sunuyor — bu ciddi bir asimetri.`, emotion: "Boğa (Bullish)" },
+                { speaker: selectedAnalysts[1].name, message: `${selectedAnalysts[0].name.split(' ')[0]}'ın tezine katılmıyorum. Fiyat ${stock.price} seviyesine geldiğinde güvenlik marjımız daraldı. Risk/getiri dengesi bozulmadan önce daha sağlam taban oluşturması gerekiyor.`, emotion: "Ayı (Bearish)" },
+                { speaker: selectedAnalysts[2].name, message: `${stock.symbol}'in sektör dinamiklerine bakıyorum. Makro akışlar bu fiyat noktasında pozitif ve ${stock.targetPrice} ${stock.currency} hedefi aşılabilir. Büyük oyuncular bu seviyeyi izliyor.`, emotion: "Boğa (Bullish)" },
+                { speaker: selectedAnalysts[3].name, message: `Ben sadece fiyat hareketine bakarım. ${stock.symbol} şu an kritik bir direnç noktasında. Hacimle desteklenen bir kırılım görmeden pozisyon almak benim felsefeme aykırı.`, emotion: "Şüpheci" },
+                { speaker: selectedAnalysts[4].name, message: `Uzun vadeli nakit akışı perspektifinden baktığımda, ${stock.price} ${stock.currency} bu şirketi değerinin altında fiyatlıyor. Sabırlı yatırımcı için %${upside} potansiyel fazlasıyla cazip.`, emotion: "Boğa (Bullish)" },
+            ];
+        }
+
+        function App() {
+            const [activeStock, setActiveStock] = useState(null);
+            const [transcript, setTranscript] = useState([]);
+            const [isLoading, setIsLoading] = useState(false);
+            const [activeTableAgents, setActiveTableAgents] = useState([]);
+            const [currentSpeaker, setCurrentSpeaker] = useState(null);
+            const [systemTime, setSystemTime] = useState(new Date());
+            const chatEndRef = useRef(null);
+
+            useEffect(() => {
+                const timer = setInterval(() => setSystemTime(new Date()), 1000);
+                return () => clearInterval(timer);
+            }, []);
+
+            const pickRandomAgents = (count) => {
+                const shuffled = [...AGENTS].sort(() => 0.5 - Math.random());
+                return shuffled.slice(0, count);
+            };
+
+            const handleStockClick = async (stock) => {
+                setActiveStock(stock);
+                setTranscript([]);
+                setIsLoading(true);
+                setCurrentSpeaker(null);
+                const selectedAgents = pickRandomAgents(5);
+                setActiveTableAgents(selectedAgents);
+                const debateData = await fetchDebate(stock, selectedAgents);
+                setIsLoading(false);
+                streamDebate(debateData);
+            };
+
+            const streamDebate = async (debateData) => {
+                for (let i = 0; i < debateData.length; i++) {
+                    setCurrentSpeaker(debateData[i].speaker);
+                    await new Promise(resolve => setTimeout(resolve, 3200));
+                    setTranscript(prev => [...prev, debateData[i]]);
+                }
+                setCurrentSpeaker(null);
+            };
+
+            useEffect(() => {
+                chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+            }, [transcript, isLoading]);
+
+            return (
+                <div className="flex h-screen w-full bg-[#020617] text-slate-300" style={{fontFamily: "'Inter', sans-serif"}}>
+                    
+                    {/* SOL PANEL: 19 Analist Veritabanı */}
+                    <div className="w-72 border-r border-slate-800 bg-slate-900/40 flex-col h-full hidden lg:flex shrink-0">
+                        <div className="p-4 border-b border-slate-800 bg-[#090d16]">
+                            <h2 className="text-xs font-bold tracking-wider text-slate-100 flex items-center gap-2" style={{fontFamily: "'JetBrains Mono', monospace"}}>
+                                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping inline-block"></span>
+                                KONSEY VERİTABANI
+                            </h2>
+                            <p className="text-[10px] text-slate-400 mt-1 tracking-widest uppercase" style={{fontFamily: "'JetBrains Mono', monospace"}}>Sistem Durumu: ÇEVRİMİÇİ</p>
+                        </div>
+                        <div className="flex-1 overflow-y-auto p-2 space-y-1.5">
+                            {AGENTS.map(agent => {
+                                const isAtTable = activeTableAgents.some(a => a.id === agent.id);
+                                const isSpeakingNow = currentSpeaker && agent.name.includes(currentSpeaker.split(' ')[0]);
+                                return (
+                                    <div key={agent.id} className={`p-2.5 rounded border transition-all duration-300 ${
+                                        isSpeakingNow ? 'bg-blue-950/40 border-blue-400 shadow-lg' 
+                                        : isAtTable ? 'bg-slate-800/80 border-blue-500/50' 
+                                        : 'border-slate-800/50 hover:bg-slate-800/40'}`}>
+                                        <div className="flex items-center gap-2.5">
+                                            <div className={`w-8 h-8 rounded flex items-center justify-center border flex-shrink-0 ${agent.color}`}>
+                                                <i className={`fa-solid ${agent.icon} text-xs`}></i>
+                                            </div>
+                                            <div className="flex-1 min-w-0">
+                                                <h3 className="font-semibold text-xs text-slate-200 truncate flex items-center justify-between gap-1">
+                                                    <span className="truncate">{agent.name}</span>
+                                                    {isSpeakingNow ? (
+                                                        <span className="text-[8px] bg-red-500/20 text-red-400 border border-red-500/30 px-1 py-0.5 rounded animate-pulse font-mono flex-shrink-0">AKTİF</span>
+                                                    ) : isAtTable ? (
+                                                        <span className="text-[8px] bg-blue-500/20 text-blue-400 border border-blue-500/30 px-1 py-0.5 rounded font-mono flex-shrink-0">MASADA</span>
+                                                    ) : null}
+                                                </h3>
+                                                <p className="text-[10px] text-slate-500 truncate">{agent.title}</p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </div>
+
+                    {/* SAĞ PANEL */}
+                    <div className="flex-1 flex flex-col relative h-full min-w-0">
+                        
+                        {/* ÜSTTE: Hisse Seçim Bandı */}
+                        <div className="border-b border-slate-800 bg-slate-950 px-4 py-3 flex gap-3 overflow-x-auto whitespace-nowrap shrink-0 items-center hide-scrollbar">
+                            <div className="text-xs text-slate-500 mr-2 flex items-center gap-2" style={{fontFamily:"'JetBrains Mono',monospace"}}>
+                                <i className="fa-solid fa-chart-line text-blue-500"></i> ENSTRÜMAN:
+                            </div>
+                            {STOCKS.map(stock => (
+                                <div key={stock.symbol} onClick={() => handleStockClick(stock)}
+                                    className={`flex flex-col border rounded px-3 py-2 cursor-pointer transition-all min-w-[150px] ${
+                                        activeStock?.symbol === stock.symbol 
+                                            ? 'border-blue-500 bg-blue-900/20' 
+                                            : 'border-slate-800 bg-[#090d16] hover:border-slate-600'}`}>
+                                    <div className="flex justify-between items-center gap-3 mb-0.5">
+                                        <span className="font-bold text-slate-200 text-sm" style={{fontFamily:"'JetBrains Mono',monospace"}}>{stock.symbol}</span>
+                                        <span className={`text-xs font-bold ${stock.change >= 0 ? 'text-emerald-400' : 'text-rose-400'}`} style={{fontFamily:"'JetBrains Mono',monospace"}}>
+                                            {stock.change > 0 ? '+' : ''}{stock.change}%
+                                        </span>
+                                    </div>
+                                    <div className="text-xs text-slate-400" style={{fontFamily:"'JetBrains Mono',monospace"}}>
+                                        {stock.price.toFixed(2)} {stock.currency}
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+
+                        {/* ANA İÇERİK */}
+                        <div className="flex-1 overflow-y-auto bg-[#040814] relative flex flex-col">
+
+                            {/* KARŞILAMA DASHBOARD */}
+                            {!activeStock && (
+                                <div className="flex-1 p-6 lg:p-8 flex flex-col space-y-5 fade-in-up">
+                                    <div className="flex flex-col md:flex-row md:items-center justify-between border-b border-slate-800 pb-5 gap-4">
+                                        <div>
+                                            <h1 className="text-xl font-bold text-slate-100 flex items-center gap-3 tracking-tight" style={{fontFamily:"'JetBrains Mono',monospace"}}>
+                                                <i className="fa-solid fa-terminal text-blue-500"></i>
+                                                BÜYÜK YATIRIM KONSEYİ TERMİNALİ v4.2
+                                            </h1>
+                                            <p className="text-xs text-slate-400 mt-1" style={{fontFamily:"'JetBrains Mono',monospace"}}>
+                                                Gelişmiş 19 Ajanlı Makro &amp; Temel Değerleme Simülasyon Arayüzü
+                                            </p>
+                                        </div>
+                                        <div className="flex items-center gap-3 text-xs text-slate-400" style={{fontFamily:"'JetBrains Mono',monospace"}}>
+                                            <div className="bg-[#090d16] border border-slate-800 rounded px-3 py-1.5 flex items-center gap-2">
+                                                <i className="fa-regular fa-clock text-blue-400"></i>
+                                                <span>{systemTime.toLocaleTimeString('tr-TR')}</span>
+                                            </div>
+                                            <div className="bg-[#090d16] border border-slate-800 rounded px-3 py-1.5 flex items-center gap-2">
+                                                <i className="fa-solid fa-server text-emerald-400"></i>
+                                                <span>SİSTEM: HAZIR</span>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    {/* Endeks Kartları */}
+                                    <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                                        {INDICES.map((idx, i) => (
+                                            <div key={i} className="bg-[#090d16] border border-slate-800/80 p-3 rounded flex flex-col justify-between">
+                                                <span className="text-[10px] text-slate-400 tracking-wider uppercase" style={{fontFamily:"'JetBrains Mono',monospace"}}>{idx.name}</span>
+                                                <div className="flex items-baseline justify-between mt-1">
+                                                    <span className="text-sm font-bold text-slate-200" style={{fontFamily:"'JetBrains Mono',monospace"}}>{idx.value}</span>
+                                                    <span className={`text-xs font-bold ${idx.up ? 'text-emerald-400' : 'text-rose-400'}`} style={{fontFamily:"'JetBrains Mono',monospace"}}>{idx.change}</span>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+
+                                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+                                        <div className="lg:col-span-2 border border-blue-500/20 bg-blue-950/10 p-6 rounded-lg flex flex-col space-y-4 pulse-border">
+                                            <div className="flex items-center gap-3 text-blue-400">
+                                                <i className="fa-solid fa-bullseye text-xl"></i>
+                                                <h3 className="font-bold text-base" style={{fontFamily:"'JetBrains Mono',monospace"}}>SİMÜLASYON BAŞLATICI</h3>
+                                            </div>
+                                            <p className="text-sm text-slate-300 leading-relaxed">
+                                                Yatırım konseyi <strong>19 seçkin analist</strong>, teorisyen ve piyasa spekülatöründen oluşmaktadır. 
+                                                Üstteki enstrüman panelinden bir hisse seçtiğinizde, sistem bu 19 kişilik havuzdan <strong>5 aktif analisti</strong> toplantıya çağırır ve hisseyi kendi felsefeleri çerçevesinde tartıştırır.
+                                            </p>
+                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs text-slate-400" style={{fontFamily:"'JetBrains Mono',monospace"}}>
+                                                <div className="flex items-start gap-2 bg-[#090d16]/60 p-2.5 rounded border border-slate-800">
+                                                    <i className="fa-solid fa-check text-emerald-400 mt-0.5"></i>
+                                                    <span>Güncel kapanış fiyatları ile aracı kurum hedefleri karşılaştırılır.</span>
+                                                </div>
+                                                <div className="flex items-start gap-2 bg-[#090d16]/60 p-2.5 rounded border border-slate-800">
+                                                    <i className="fa-solid fa-check text-emerald-400 mt-0.5"></i>
+                                                    <span>Analistler kendi teorilerine ve kitap felsefelerine göre tez üretir.</span>
+                                                </div>
+                                            </div>
+                                            <div className="pt-2 border-t border-slate-800 flex items-center gap-2">
+                                                <span className="text-xs text-blue-400 animate-pulse" style={{fontFamily:"'JetBrains Mono',monospace"}}>
+                                                    <i className="fa-solid fa-circle-play mr-1"></i> Yukarıdaki hisselerden birine tıklayarak oturumu başlatın
+                                                </span>
+                                            </div>
+                                        </div>
+
+                                        <div className="bg-[#090d16] border border-slate-800 p-6 rounded-lg flex flex-col justify-between">
+                                            <div>
+                                                <h3 className="text-sm font-bold text-slate-200 mb-4 flex items-center gap-2" style={{fontFamily:"'JetBrains Mono',monospace"}}>
+                                                    <i className="fa-solid fa-chart-pie text-cyan-400"></i>
+                                                    KONSEY EKOL DAĞILIMI
+                                                </h3>
+                                                <div className="space-y-3">
+                                                    {[
+                                                        {label: "Temel Analiz & Değerleme", count: "6 Ajan", pct: "31.5%", color: "bg-blue-500"},
+                                                        {label: "Büyüme & İnovasyon", count: "4 Ajan", pct: "21%", color: "bg-fuchsia-500"},
+                                                        {label: "Risk Yönetimi & Makro", count: "4 Ajan", pct: "21%", color: "bg-cyan-500"},
+                                                        {label: "Fiyat Trendi & Spekülasyon", count: "5 Ajan", pct: "26.5%", color: "bg-amber-500"},
+                                                    ].map((item, i) => (
+                                                        <div key={i}>
+                                                            <div className="flex justify-between text-xs mb-1">
+                                                                <span className="text-slate-400">{item.label}</span>
+                                                                <span className="text-slate-200" style={{fontFamily:"'JetBrains Mono',monospace"}}>{item.count}</span>
+                                                            </div>
+                                                            <div className="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden">
+                                                                <div className={`${item.color} h-full rounded-full`} style={{width: item.pct}}></div>
+                                                            </div>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                            <p className="text-[10px] text-slate-500 mt-4 border-t border-slate-800/80 pt-3" style={{fontFamily:"'JetBrains Mono',monospace"}}>
+                                                * Tüm analistler eserlerindeki metodolojik parametrelere göre kurgulanmıştır.
+                                            </p>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* AKTİF TARTIŞMA SENARYOSU */}
+                            {activeStock && (
+                                <div className="w-full flex flex-col">
+                                    
+                                    {/* Hisse Detay Paneli */}
+                                    <div className="bg-[#040814]/95 backdrop-blur border-b border-slate-800 p-5 flex flex-col md:flex-row md:items-center justify-between gap-4 fade-in-up">
+                                        <div>
+                                            <div className="flex items-baseline gap-3 mb-1">
+                                                <h1 className="text-3xl font-bold text-white tracking-tight">{activeStock.symbol}</h1>
+                                                <span className="text-slate-400 text-lg">{activeStock.name}</span>
+                                            </div>
+                                            <div className="flex items-center gap-4 mt-2">
+                                                <span className="text-2xl text-slate-200" style={{fontFamily:"'JetBrains Mono',monospace"}}>{activeStock.price.toFixed(2)} <span className="text-slate-500 text-lg">{activeStock.currency}</span></span>
+                                                <span className={`px-2 py-1 rounded text-sm font-bold flex items-center gap-1 ${activeStock.change >= 0 ? 'bg-emerald-950 text-emerald-400 border border-emerald-800' : 'bg-rose-950 text-rose-400 border border-rose-800'}`} style={{fontFamily:"'JetBrains Mono',monospace"}}>
+                                                    <i className={`fa-solid ${activeStock.change >= 0 ? 'fa-caret-up' : 'fa-caret-down'}`}></i>
+                                                    {Math.abs(activeStock.change)}%
+                                                </span>
+                                                <span className="text-slate-500 text-sm border-l border-slate-700 pl-4">{activeStock.sector}</span>
+                                            </div>
+                                        </div>
+                                        <div className="bg-[#090d16] border border-slate-800 rounded p-4 flex flex-col md:items-end min-w-[180px]">
+                                            <span className="text-xs text-slate-400 uppercase tracking-wider mb-1" style={{fontFamily:"'JetBrains Mono',monospace"}}>Konsensüs Hedef</span>
+                                            <div className="text-xl font-bold text-blue-400" style={{fontFamily:"'JetBrains Mono',monospace"}}>
+                                                {activeStock.targetPrice.toFixed(2)} <span className="text-slate-500 text-base">{activeStock.currency}</span>
+                                            </div>
+                                            <div className="text-emerald-400 text-sm mt-1 flex items-center gap-1" style={{fontFamily:"'JetBrains Mono',monospace"}}>
+                                                <i className="fa-solid fa-bullseye text-xs"></i>
+                                                +{(((activeStock.targetPrice - activeStock.price) / activeStock.price) * 100).toFixed(1)}% Potansiyel
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    {/* 3D BOARDROOM */}
+                                    <div className="p-6 bg-slate-950/60 border-b border-slate-800/80 flex flex-col items-center justify-center">
+                                        <h4 className="text-[10px] text-slate-500 uppercase tracking-widest mb-6" style={{fontFamily:"'JetBrains Mono',monospace"}}>
+                                            <i className="fa-solid fa-circle-nodes text-blue-500 mr-1.5"></i> CANLI OTURUM ODASI
+                                        </h4>
+                                        <div className="boardroom-perspective w-full max-w-2xl" style={{height: "260px", position: "relative", display: "flex", alignItems: "center", justifyContent: "center"}}>
+                                            {/* Masa */}
+                                            <div className="boardroom-table absolute bg-gradient-to-b from-amber-900 to-amber-950 border-4 border-amber-800 rounded-full flex items-center justify-center z-10" style={{width:"360px", height:"130px"}}>
+                                                <div className="absolute inset-3 bg-slate-950/90 rounded-full border border-amber-900/40 flex flex-col items-center justify-center text-center">
+                                                    <span className="text-[10px] font-bold text-slate-400 tracking-wider uppercase" style={{fontFamily:"'JetBrains Mono',monospace"}}>{activeStock.symbol} ANALİZİ</span>
+                                                    <span className="text-[10px] text-blue-400 mt-0.5" style={{fontFamily:"'JetBrains Mono',monospace"}}>{activeStock.price} {activeStock.currency}</span>
+                                                </div>
+                                            </div>
+
+                                            {/* Analist Koltukları */}
+                                            {activeTableAgents.map((agent, index) => {
+                                                const angle = (index * 2 * Math.PI) / 5 - Math.PI / 2;
+                                                const rx = 200, ry = 68;
+                                                const left = `calc(50% + ${rx * Math.cos(angle)}px)`;
+                                                const top = `calc(50% + ${ry * Math.sin(angle)}px)`;
+                                                const isSpeaking = currentSpeaker && agent.name.includes(currentSpeaker.split(' ')[0]);
+                                                return (
+                                                    <div key={agent.id} className="absolute flex flex-col items-center transition-all duration-500" style={{left, top, transform:'translate(-50%,-50%)', zIndex: isSpeaking ? 30 : 20}}>
+                                                        <div className={`w-14 h-14 rounded-full flex items-center justify-center relative border transition-all duration-300 ${isSpeaking ? 'bg-blue-900/80 border-blue-400' : 'bg-[#090d16] border-slate-700'}`}
+                                                             style={isSpeaking ? {transform:'scale(1.15)', boxShadow:'0 0 20px rgba(59,130,246,0.6)'} : {}}>
+                                                            <div className={`w-10 h-10 rounded-full flex items-center justify-center border text-xs ${agent.color}`}>
+                                                                <i className={`fa-solid ${agent.icon}`}></i>
+                                                            </div>
+                                                            {isSpeaking && <span className="absolute -inset-1 rounded-full border border-blue-400 animate-ping opacity-60"></span>}
+                                                        </div>
+                                                        <div className={`mt-1.5 px-2 py-0.5 rounded text-[9px] font-bold whitespace-nowrap ${isSpeaking ? 'bg-blue-500 text-white border border-blue-400' : 'bg-[#090d16] text-slate-300 border border-slate-800'}`} style={{fontFamily:"'JetBrains Mono',monospace"}}>
+                                                            {agent.name.split(' ')[0]}
+                                                        </div>
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+
+                                    {/* TRANSKRİPT AKIŞI */}
+                                    <div className="max-w-4xl mx-auto w-full p-4 pb-16 space-y-4">
+                                        {/* Üyeler Listesi */}
+                                        <div className="flex flex-wrap items-center gap-2 p-3 bg-slate-900/10 border border-slate-800/80 rounded">
+                                            <span className="text-xs text-slate-500 mr-1" style={{fontFamily:"'JetBrains Mono',monospace"}}>OTURUM ÜYELERİ:</span>
+                                            {activeTableAgents.map((agent) => (
+                                                <div key={agent.id} className="flex items-center gap-1.5 border-r border-slate-800 pr-2 last:border-0 fade-in-up">
+                                                    <div className={`w-6 h-6 rounded flex items-center justify-center border text-[10px] ${agent.color}`}><i className={`fa-solid ${agent.icon}`}></i></div>
+                                                    <span className="text-xs text-slate-300" style={{fontFamily:"'JetBrains Mono',monospace"}}>{agent.name.split(' ')[0]}</span>
+                                                </div>
+                                            ))}
+                                        </div>
+
+                                        {/* Yükleniyor */}
+                                        {isLoading && (
+                                            <div className="flex items-center gap-3 p-4 rounded-lg bg-blue-950/20 border border-blue-900/30">
+                                                <i className="fa-solid fa-circle-notch fa-spin text-blue-400 text-lg"></i>
+                                                <div>
+                                                    <p className="text-sm text-blue-300 font-semibold">Analistler masaya davet ediliyor...</p>
+                                                    <p className="text-xs text-slate-500 mt-0.5" style={{fontFamily:"'JetBrains Mono',monospace"}}>{activeStock.symbol} dosyası hazırlanıyor<span className="cursor-blink">_</span></p>
+                                                </div>
+                                            </div>
+                                        )}
+
+                                        {/* Canlı Konuşan Analist Bildirimi */}
+                                        {currentSpeaker && !isLoading && (
+                                            <div className="flex items-center gap-2.5 p-3 rounded border border-blue-800/60 bg-blue-950/20">
+                                                <span className="w-2 h-2 rounded-full bg-red-400 animate-pulse flex-shrink-0"></span>
+                                                <span className="text-xs text-blue-300 animate-pulse" style={{fontFamily:"'JetBrains Mono',monospace"}}>
+                                                    <i className="fa-solid fa-microphone mr-1.5"></i> {currentSpeaker} söz alıyor...
+                                                </span>
+                                            </div>
+                                        )}
+
+                                        {/* Konuşma Mesajları */}
+                                        <div className="space-y-4">
+                                            {transcript.map((msg, index) => {
+                                                const agent = AGENTS.find(a => a.name.includes(msg.speaker.split(' ')[0])) || AGENTS[0];
+                                                const isBull = msg.emotion.includes('Boğa') || msg.emotion.includes('Bullish');
+                                                const isBear = msg.emotion.includes('Ayı') || msg.emotion.includes('Bearish');
+                                                const emotionBg = isBull ? 'bg-emerald-500/10 border-emerald-800/40' : isBear ? 'bg-rose-500/10 border-rose-800/40' : 'bg-slate-800/30 border-slate-700/40';
+                                                const emotionText = isBull ? 'text-emerald-400' : isBear ? 'text-rose-400' : 'text-amber-400';
+                                                return (
+                                                    <div key={index} className={`p-4 rounded-lg border fade-in-up ${emotionBg}`}>
+                                                        <div className="flex items-center gap-3 mb-3">
+                                                            <div className={`w-9 h-9 rounded flex items-center justify-center border flex-shrink-0 ${agent.color}`}>
+                                                                <i className={`fa-solid ${agent.icon} text-sm`}></i>
+                                                            </div>
+                                                            <div className="flex-1 min-w-0">
+                                                                <div className="flex items-center gap-2 flex-wrap">
+                                                                    <span className="font-bold text-sm text-white">{msg.speaker}</span>
+                                                                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${emotionText} border ${isBull ? 'border-emerald-800/60 bg-emerald-950/50' : isBear ? 'border-rose-800/60 bg-rose-950/50' : 'border-amber-800/60 bg-amber-950/50'}`} style={{fontFamily:"'JetBrains Mono',monospace"}}>
+                                                                        {isBull ? '▲ BOĞA' : isBear ? '▼ AYI' : '— NÖTR'}
+                                                                    </span>
+                                                                    <span className="text-[10px] text-slate-500 ml-auto" style={{fontFamily:"'JetBrains Mono',monospace"}}>
+                                                                        {new Date().toLocaleTimeString('tr-TR')}
+                                                                    </span>
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                        <p className="text-sm text-slate-300 leading-relaxed pl-12">{msg.message}</p>
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+
+                                        {/* Oturum Sonu */}
+                                        {!isLoading && !currentSpeaker && transcript.length > 0 && (
+                                            <div className="flex items-center gap-2 text-xs text-slate-600 pt-2" style={{fontFamily:"'JetBrains Mono',monospace"}}>
+                                                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                                                OTURUM_SONA_ERDİ // {transcript.length} AÇIKLAMA KAYDEDİLDİ
+                                            </div>
+                                        )}
+
+                                        <div ref={chatEndRef}></div>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
 </html>
