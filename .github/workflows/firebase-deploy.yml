@@ -31,8 +31,15 @@ jobs:
         run: |
           npm run build
 
-      - name: List Build Artifacts
-        run: ls -R council-chamber/dist
+      - name: Verify Build Artifacts
+        run: |
+          if [ -d "council-chamber/dist" ]; then
+            echo "Build directory exists. Content:"
+            ls -R council-chamber/dist
+          else
+            echo "Error: Build directory council-chamber/dist not found!"
+            exit 1
+          fi
 
       - name: Deploy to Firebase Hosting
         uses: FirebaseExtended/action-hosting-deploy@v0
