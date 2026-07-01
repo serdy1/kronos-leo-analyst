@@ -19,17 +19,20 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
 
       - name: Install Dependencies
         run: |
           cd council-chamber
-          npm ci || npm install
+          npm install
 
       - name: Build Project
         run: |
           cd council-chamber
           npm run build
+
+      - name: List Build Artifacts
+        run: ls -R council-chamber/dist
 
       - name: Deploy to Firebase Hosting
         uses: FirebaseExtended/action-hosting-deploy@v0
@@ -37,3 +40,4 @@ jobs:
           repoToken: '${{ secrets.GITHUB_TOKEN }}'
           firebaseServiceAccount: '${{ secrets.FIREBASE_SERVICE_ACCOUNT_INVESTMENT_AGENT_COUNCIL }}'
           projectId: investment-agent-council
+          entryPoint: council-chamber
