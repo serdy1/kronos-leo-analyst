@@ -22,13 +22,13 @@ jobs:
           node-version: 22
 
       - name: Install Dependencies
+        working-directory: council-chamber
         run: |
-          cd council-chamber
           npm install
 
       - name: Build Project
+        working-directory: council-chamber
         run: |
-          cd council-chamber
           npm run build
 
       - name: List Build Artifacts
