@@ -4,12 +4,13 @@ import requests
 from bs4 import BeautifulSoup
 from datetime import datetime, time
 import pytz
+import re
 from mcp.server.fastmcp import FastMCP
 
 # Konfigürasyon
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger("BIST-Scanner-v6")
-mcp = FastMCP("BIST Intelligence Terminal v6.0")
+logger = logging.getLogger("BIST-Scanner-v7")
+mcp = FastMCP("BIST Intelligence Terminal v7.0")
 
 # TRT Timezone
 TRT = pytz.timezone('Europe/Istanbul')
@@ -22,8 +23,44 @@ def is_bist_trading_hours():
     current_time = now.time()
     return time(9, 55) <= current_time <= time(18, 10)
 
+def scrape_midas(symbol: str):
+    """Primary Source: Midas Canlı Borsa."""
+    try:
+        clean_symbol = symbol.replace(".IS", "").upper()
+        # Midas uses a consolidated page for many tickers
+        url = "https://www.getmidas.com/canli-borsa/"
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Cache-Control': 'no-cache',
+            'Pragma': 'no-cache'
+        }
+        # Note: In production, we might want to cache this page for 60s to avoid hammering
+        response = requests.get(url, headers=headers, timeout=10)
+        soup = BeautifulSoup(response.content, 'html.parser')
+        
+        # Method 1: Row Search
+        rows = soup.find_all('tr')
+        for row in rows:
+            cells = row.find_all('td')
+            if cells and clean_symbol == cells[0].get_text(strip=True):
+                price_text = cells[1].get_text(strip=True).replace(".", "").replace(",", ".")
+                return float(price_text)
+                
+        # Method 2: Link Search
+        link = soup.find('a', string=re.compile(f"^{clean_symbol}$", re.I))
+        if link:
+            parent_row = link.find_parent('tr')
+            if parent_row:
+                cells = parent_row.find_all('td')
+                if len(cells) > 1:
+                    price_text = cells[1].get_text(strip=True).replace(".", "").replace(",", ".")
+                    return float(price_text)
+    except Exception as e:
+        logger.error(f"Midas scraping error for {symbol}: {e}")
+    return None
+
 def scrape_bigpara(symbol: str):
-    """Fallback 1: Bigpara scraping."""
+    """Fallback 2: Bigpara scraping."""
     try:
         clean_symbol = symbol.replace(".IS", "").lower()
         url = f"https://bigpara.hurriyet.com.tr/borsa/hisse-fiyatlari/{clean_symbol}-detay/"
@@ -38,7 +75,7 @@ def scrape_bigpara(symbol: str):
     return None
 
 def scrape_mynet(symbol: str):
-    """Fallback 2: Mynet scraping."""
+    """Fallback 3: Mynet scraping."""
     try:
         clean_symbol = symbol.replace(".IS", "").lower()
         url = f"https://finans.mynet.com/borsa/hisseler/{clean_symbol}/"
@@ -53,10 +90,15 @@ def scrape_mynet(symbol: str):
     return None
 
 def get_ticker_price(symbol: str):
-    """Triple-Source Redundancy & Volatility Guard."""
+    """Multi-Source Redundancy & Volatility Guard."""
     prices = []
     
-    # Source 1: yfinance
+    # Source 1: Midas (Primary for BIST)
+    if ".IS" in symbol:
+        midas_price = scrape_midas(symbol)
+        if midas_price: prices.append(midas_price)
+
+    # Source 2: yfinance (Primary for Global, Fallback for BIST)
     try:
         ticker = yf.Ticker(symbol)
         yf_price = ticker.fast_info.last_price
@@ -65,7 +107,7 @@ def get_ticker_price(symbol: str):
     except Exception as e:
         logger.error(f"yfinance error for {symbol}: {e}")
 
-    # Source 2 & 3 (Only for BIST symbols)
+    # Source 3 & 4 (Fallback for BIST)
     if ".IS" in symbol:
         bp_price = scrape_bigpara(symbol)
         if bp_price: prices.append(bp_price)
@@ -76,11 +118,9 @@ def get_ticker_price(symbol: str):
     if not prices:
         return None
 
-    # Volatility Guard: Anomali kontrolü (Medyan kullanarak sapmaları filtrele)
+    # Volatility Guard: Anomali kontrolü
     prices.sort()
     median_price = prices[len(prices)//2]
-    
-    # Sanity Cross-check: Eğer bir kaynak medyan fiyattan %10'dan fazla sapıyorsa onu ele
     valid_prices = [p for p in prices if 0.9 * median_price <= p <= 1.1 * median_price]
     
     return sum(valid_prices) / len(valid_prices) if valid_prices else median_price
@@ -88,8 +128,9 @@ def get_ticker_price(symbol: str):
 @mcp.tool()
 async def get_market_data(ticker: str) -> str:
     """
-    Self-healing Telemetry System v6.0
-    Triple-Source Redundancy: yfinance -> Bigpara -> Mynet
+    Self-healing Telemetry System v7.0
+    Primary Source: Midas (BIST ground-truth)
+    Triple-Source Fallback: yfinance -> Bigpara -> Mynet
     Volatility Guard: Anomaly cross-checks active.
     USD/TRY Decoupling: Strict 46.67 rate active.
     """
@@ -100,13 +141,16 @@ async def get_market_data(ticker: str) -> str:
         "ANHYT": "ANHYT.IS",
         "USDTRY": "USDTRY=X",
         "BTC": "BTC-USD",
-        "GOLD": "GC=F"
+        "GOLD": "GC=F",
+        "KCHOL": "KCHOL.IS",
+        "THYAO": "THYAO.IS",
+        "DOAS": "DOAS.IS"
     }
     
     query = ticker.upper().strip()
     symbol = mapping.get(query, query if ".IS" in query or "=" in query else f"{query}.IS")
     
-    # Fixed USD/TRY Decoupling (Highest Senior Boss Requirement)
+    # Fixed USD/TRY Decoupling
     FIXED_USDTRY = 46.67
     
     price = get_ticker_price(symbol)
