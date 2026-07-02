@@ -39,6 +39,8 @@ jobs:
             ls -R council-chamber/dist
           else
             echo "Error: Build directory council-chamber/dist not found!"
+            # Debug: Check where the build might have landed
+            find . -maxdepth 4 -name "dist"
             exit 1
           fi
 
@@ -48,4 +50,4 @@ jobs:
           repoToken: '${{ secrets.GITHUB_TOKEN }}'
           firebaseServiceAccount: '${{ secrets.Firebase_Hosting_Admin }}'
           projectId: investment-agent-council
-          entryPoint: .
+          channelId: live
