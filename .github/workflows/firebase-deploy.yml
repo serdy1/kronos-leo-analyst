@@ -7,6 +7,7 @@ on:
     paths:
       - 'council-chamber/**'
       - '.github/workflows/firebase-deploy.yml'
+      - 'bist_mcp_server.py'
   workflow_dispatch:
 
 jobs:
