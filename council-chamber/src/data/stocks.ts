@@ -26,5 +26,5 @@ export const stocks: StockData = {
   lastUpdated: new Date().toISOString(),
 };
 
-// All USD/TRY conversions in the application must use this fixed rate.
-export const FIXED_USDTRY = 46.67;
+// User-controlled fixed rate used for every USD/TRY conversion.
+export const FIXED_USDTRY = 47.98;
